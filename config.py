@@ -3,7 +3,7 @@ import os
 # =============================================================================
 # API Keys
 # =============================================================================
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "8292769f-aeb2-471c-af1d-fb98576972e4")
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
 
 # =============================================================================
@@ -55,7 +55,7 @@ HELIUS_RPC_BASE = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 # =============================================================================
 # Birdeye API (fallback for OHLCV / market data)
 # =============================================================================
-BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY", "")
+BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY", "dac9521a4c004f65897b2bd3e52cf10d")
 BIRDEYE_API_BASE = "https://public-api.birdeye.so"
 
 # =============================================================================
