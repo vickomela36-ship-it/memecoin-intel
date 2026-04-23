@@ -40,8 +40,11 @@ SCAN_INTERVAL_SECONDS = 60        # How often to scan for new opportunities
 # =============================================================================
 # Jupiter API
 # =============================================================================
+JUPITER_API_KEY = os.getenv("JUPITER_API_KEY", "jup_2a68d98d00f9d7b8a69f213d81dd68606fd6d950b27cf9234ac16eb2030edded")
 JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
 JUPITER_TOKEN_LIST_API = "https://tokens.jup.ag/tokens?tags=verified"
+JUPITER_TOKEN_API = "https://api.jup.ag/tokens/v1"
+JUPITER_ULTRA_API = "https://api.jup.ag/ultra/v1"
 
 # =============================================================================
 # Helius API

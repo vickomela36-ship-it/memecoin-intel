@@ -7,11 +7,17 @@ Birdeye for OHLCV history and volume breakdowns (buy/sell).
 import time
 import requests
 from config import (
+    JUPITER_API_KEY,
     JUPITER_PRICE_API,
+    JUPITER_TOKEN_API,
     JUPITER_TOKEN_LIST_API,
     BIRDEYE_API_KEY,
     BIRDEYE_API_BASE,
 )
+
+
+def _jup_headers() -> dict:
+    return {"Authorization": f"Bearer {JUPITER_API_KEY}"}
 
 
 # ── Jupiter Price API ────────────────────────────────────────────────────────
@@ -30,7 +36,7 @@ def get_prices(mint_addresses: list[str]) -> dict[str, float]:
         batch = mint_addresses[i : i + 100]
         params = {"ids": ",".join(batch)}
         try:
-            resp = requests.get(JUPITER_PRICE_API, params=params, timeout=10)
+            resp = requests.get(JUPITER_PRICE_API, params=params, headers=_jup_headers(), timeout=10)
             resp.raise_for_status()
             data = resp.json().get("data", {})
             for mint, info in data.items():
@@ -50,12 +56,40 @@ def get_price(mint_address: str) -> float | None:
 def get_verified_token_list() -> list[dict]:
     """Fetch Jupiter's verified token list (useful for finding active tokens)."""
     try:
-        resp = requests.get(JUPITER_TOKEN_LIST_API, timeout=15)
+        resp = requests.get(JUPITER_TOKEN_LIST_API, headers=_jup_headers(), timeout=15)
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as e:
         print(f"[Jupiter] Token list error: {e}")
         return []
+
+
+def get_token_info(mint_address: str) -> dict | None:
+    """
+    Fetch token metadata from Jupiter Token API v1.
+    Returns name, symbol, decimals, daily volume, and tags.
+    """
+    url = f"{JUPITER_TOKEN_API}/token/{mint_address}"
+    try:
+        resp = requests.get(url, headers=_jup_headers(), timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as e:
+        print(f"[Jupiter] Token info error for {mint_address}: {e}")
+        return None
+
+
+def get_token_daily_volume(mint_address: str) -> float | None:
+    """Get 24h USD volume for a token directly from Jupiter."""
+    url = f"{JUPITER_TOKEN_API}/token/{mint_address}/volume"
+    try:
+        resp = requests.get(url, headers=_jup_headers(), timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return float(data.get("volume24h") or data.get("volume") or 0) or None
+    except requests.RequestException as e:
+        print(f"[Jupiter] Volume error for {mint_address}: {e}")
+        return None
 
 
 # ── Birdeye API (OHLCV + Volume) ────────────────────────────────────────────
