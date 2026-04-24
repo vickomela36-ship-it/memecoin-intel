@@ -1,38 +1,18 @@
 """
-Scanner — the main loop that ties everything together.
+Terminal-based memecoin swing recovery scanner.
+Runs every 3 minutes, fetches trending tokens from DexScreener,
+and flags dip recovery setups.
 
-1. Fetches trending high-volume Solana tokens
-2. Filters by age (>24h) and market cap (>$2M)
-3. Runs dump detection + recovery signal checks
-4. Logs signals and manages positions
-5. Monitors open positions for exit signals
+Usage: python scanner.py
 """
 
 import time
-import sys
+import requests
 from datetime import datetime, timezone
 
-from config import (
-    SCAN_INTERVAL_SECONDS,
-    MAX_POSITION_SOL,
-    MAX_OPEN_POSITIONS,
-    TAKE_PROFIT_2X,
-    TAKE_PROFIT_3X,
-    STOP_LOSS_PCT,
-    MIN_TOKEN_AGE_HOURS,
-    MIN_MARKET_CAP_USD,
-    MIN_24H_VOLUME_USD,
-)
-from jupiter_client import (
-    get_prices,
-    get_ohlcv,
-    get_trade_volume_breakdown,
-    get_trending_tokens,
-    get_token_overview,
-)
-from helius_client import get_token_age_hours, get_market_cap
-from signals import check_recovery_entry, check_exit_signals, Signal
-from tracker import Tracker
+DEXSCREENER_BOOSTS = "https://api.dexscreener.com/token-boosts/top/v1"
+DEXSCREENER_TOKEN = "https://api.dexscreener.com/latest/dex/tokens"
+SCAN_INTERVAL = 180  # 3 minutes
 
 
 def log(msg: str):
@@ -40,192 +20,154 @@ def log(msg: str):
     print(f"[{ts}] {msg}")
 
 
-def scan_for_entries(tracker: Tracker) -> list[Signal]:
-    """Scan trending tokens for recovery swing entries."""
-    signals_found = []
+def fetch_trending() -> list[dict]:
+    try:
+        r = requests.get(DEXSCREENER_BOOSTS, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        log(f"ERROR fetching trending: {e}")
+        return []
 
-    if tracker.open_position_count() >= MAX_OPEN_POSITIONS:
-        log(f"Max positions ({MAX_OPEN_POSITIONS}) reached — skipping entry scan")
-        return signals_found
 
-    # Step 1: Get trending high-volume tokens
-    log("Fetching trending tokens...")
-    trending = get_trending_tokens(sort_by="volume24hUSD", limit=50)
+def fetch_pairs(address: str) -> list[dict]:
+    try:
+        r = requests.get(f"{DEXSCREENER_TOKEN}/{address}", timeout=15)
+        r.raise_for_status()
+        return r.json().get("pairs") or []
+    except Exception as e:
+        log(f"  Pair fetch error for {address[:12]}...: {e}")
+        return []
 
+
+def classify_signal(h1: float, h6: float, h24: float) -> str:
+    recovering = h1 > 2.0
+    if h24 <= -30 and recovering:
+        return "STRONG DIP"
+    if h6 <= -25 and recovering:
+        return "BUY DIP"
+    if (h6 <= -20 or h24 <= -25) and h1 > 0:
+        return "WATCH"
+    return "SKIP"
+
+
+def fmt_price(p: float) -> str:
+    if p == 0: return "$0"
+    if p < 0.0000001: return f"${p:.12f}"
+    if p < 0.00001:   return f"${p:.10f}"
+    if p < 0.001:     return f"${p:.8f}"
+    if p < 1:         return f"${p:.6f}"
+    return f"${p:,.4f}"
+
+
+def fmt_usd(v: float) -> str:
+    if v >= 1_000_000: return f"${v/1e6:.1f}M"
+    if v >= 1_000:     return f"${v/1e3:.0f}K"
+    return f"${v:.0f}"
+
+
+def scan_once():
+    """Run a single scan cycle."""
+    log("=" * 65)
+    log("SCANNING for dip recovery setups...")
+    log("=" * 65)
+
+    trending = fetch_trending()
     if not trending:
-        log("No trending tokens found")
-        return signals_found
-
-    log(f"Found {len(trending)} trending tokens — filtering...")
-
-    for token in trending:
-        mint = token.get("address")
-        name = token.get("symbol", token.get("name", "???"))
-
-        if not mint:
-            continue
-
-        # Skip if we already have an open position
-        if tracker.has_open_position(mint):
-            continue
-
-        # Step 2: Quick filter — get overview data first (cheap call)
-        overview = get_token_overview(mint)
-        if not overview:
-            continue
-
-        volume_24h = overview.get("v24hUSD", 0) or 0
-        if volume_24h < MIN_24H_VOLUME_USD:
-            continue
-
-        price_usd = overview.get("price", 0) or 0
-        if price_usd <= 0:
-            continue
-
-        mc = overview.get("mc", 0) or overview.get("realMc", 0) or 0
-        if mc < MIN_MARKET_CAP_USD:
-            # Fallback: compute from supply
-            mc_computed = get_market_cap(mint, price_usd)
-            if mc_computed is None or mc_computed < MIN_MARKET_CAP_USD:
-                continue
-            mc = mc_computed
-
-        # Step 3: Check token age
-        age = get_token_age_hours(mint)
-        if age is None or age < MIN_TOKEN_AGE_HOURS:
-            continue
-
-        log(f"  Analyzing {name} ({mint[:8]}...) — MCap=${mc:,.0f} Vol=${volume_24h:,.0f} Age={age:.0f}h")
-
-        # Step 4: Get OHLCV candles for dump detection (15m candles, 6h = 24 candles)
-        candles = get_ohlcv(mint, interval="15m", limit=24)
-        if len(candles) < 8:
-            continue
-
-        # Step 5: Get buy/sell volume breakdown
-        vol_breakdown = get_trade_volume_breakdown(mint)
-        buy_ratio = vol_breakdown["buy_ratio"] if vol_breakdown else 0.5
-
-        # Step 6: Check for recovery entry signal
-        signal = check_recovery_entry(
-            mint_address=mint,
-            token_name=name,
-            candles=candles,
-            buy_volume_ratio=buy_ratio,
-            market_cap=mc,
-            token_age_hours=age,
-            volume_24h=volume_24h,
-        )
-
-        if signal:
-            signals_found.append(signal)
-            log(f"  >> SIGNAL: {signal.signal_type} for {name} @ ${signal.price:.6f} "
-                f"(confidence={signal.confidence:.0%})")
-            log(f"     {signal.reason}")
-
-        time.sleep(0.3)  # Rate limiting
-
-    return signals_found
-
-
-def monitor_open_positions(tracker: Tracker):
-    """Check open positions for exit signals (TP or SL)."""
-    open_positions = tracker.get_open_positions()
-    if not open_positions:
+        log("No trending tokens returned.")
         return
 
-    mints = [p.mint_address for p in open_positions]
-    prices = get_prices(mints)
+    log(f"Fetched {len(trending)} boosted tokens — filtering for Solana...")
 
-    for pos in open_positions:
-        current_price = prices.get(pos.mint_address)
-        if current_price is None:
+    seen = set()
+    signals_found = 0
+
+    for token in trending:
+        address = token.get("tokenAddress", "")
+        chain = token.get("chainId", "")
+
+        if not address or address in seen:
+            continue
+        if chain and chain != "solana":
+            continue
+        seen.add(address)
+
+        pairs = fetch_pairs(address)
+        sol_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not sol_pairs:
             continue
 
-        pnl = ((current_price - pos.entry_price) / pos.entry_price) * 100
+        best = max(sol_pairs, key=lambda p: float(p.get("volume", {}).get("h24", 0) or 0))
 
-        exit_signal = check_exit_signals(
-            entry_price=pos.entry_price,
-            current_price=current_price,
-            take_profit_2x=TAKE_PROFIT_2X,
-            take_profit_3x=TAKE_PROFIT_3X,
-            stop_loss_pct=STOP_LOSS_PCT,
-        )
+        pc = best.get("priceChange", {})
+        h1  = float(pc.get("h1", 0) or 0)
+        h6  = float(pc.get("h6", 0) or 0)
+        h24 = float(pc.get("h24", 0) or 0)
 
-        if exit_signal:
-            closed = tracker.close_position(pos.mint_address, current_price, exit_signal)
-            if closed:
-                emoji = "WIN" if (closed.pnl_pct or 0) > 0 else "LOSS"
-                log(f"  CLOSED {pos.token_name}: {exit_signal} @ ${current_price:.6f} "
-                    f"PnL={closed.pnl_pct:+.1f}% ({closed.pnl_sol:+.4f} SOL) [{emoji}]")
-        else:
-            log(f"  {pos.token_name}: ${current_price:.6f} PnL={pnl:+.1f}%")
-
-
-def process_signals(signals: list[Signal], tracker: Tracker):
-    """Log new entry signals as positions (paper trading)."""
-    for signal in signals:
-        if tracker.open_position_count() >= MAX_OPEN_POSITIONS:
-            break
-        if tracker.has_open_position(signal.mint_address):
+        signal = classify_signal(h1, h6, h24)
+        if signal == "SKIP":
             continue
 
-        pos = tracker.open_position(
-            mint_address=signal.mint_address,
-            token_name=signal.token_name,
-            entry_price=signal.price,
-            size_sol=MAX_POSITION_SOL,
-            confidence=signal.confidence,
-            signal_reason=signal.reason,
-        )
-        log(f"  OPENED position: {pos.token_name} @ ${pos.entry_price:.6f} "
-            f"({pos.size_sol} SOL, confidence={pos.confidence:.0%})")
+        price = float(best.get("priceUsd", 0) or 0)
+        fdv = float(best.get("fdv", 0) or 0)
+        vol = float(best.get("volume", {}).get("h24", 0) or 0)
+        liq = float(best.get("liquidity", {}).get("usd", 0) or 0)
+
+        base = best.get("baseToken", {})
+        symbol = base.get("symbol", "?")
+        name = base.get("name", "?")
+        url = best.get("url", "")
+
+        signals_found += 1
+
+        # Signal header
+        marker = {"STRONG DIP": "***", "BUY DIP": "**", "WATCH": "*"}.get(signal, "")
+        print()
+        log(f"  {marker} [{signal}] {symbol} ({name})")
+        log(f"     Price: {fmt_price(price)}  |  2x Target: {fmt_price(price * 2)}")
+        log(f"     1h: {h1:+.1f}%  |  6h: {h6:+.1f}%  |  24h: {h24:+.1f}%")
+        log(f"     MCap: {fmt_usd(fdv)}  |  Vol: {fmt_usd(vol)}  |  Liq: {fmt_usd(liq)}")
+        log(f"     {url}")
+        log(f"     {address}")
+
+        time.sleep(0.25)
+
+    print()
+    if signals_found == 0:
+        log("No dip recovery signals found this cycle.")
+    else:
+        log(f"Found {signals_found} signal(s).")
 
 
-def run_scanner():
-    """Main scanner loop."""
-    tracker = Tracker()
-
-    log("=" * 60)
-    log("Memecoin Swing Recovery Scanner")
-    log(f"Strategy: Catch 2x-3x recoveries after dumps")
-    log(f"Filters: Age>{MIN_TOKEN_AGE_HOURS}h | MCap>${MIN_MARKET_CAP_USD/1e6:.0f}M | Vol>{MIN_24H_VOLUME_USD/1e3:.0f}K")
-    log(f"Targets: TP={TAKE_PROFIT_2X}x/{TAKE_PROFIT_3X}x | SL={STOP_LOSS_PCT}%")
-    log(f"Max positions: {MAX_OPEN_POSITIONS} @ {MAX_POSITION_SOL} SOL each")
-    log("=" * 60)
+def main():
+    print()
+    log("=" * 65)
+    log("  MEMECOIN SWING RECOVERY SCANNER")
+    log("  Source: DexScreener (free, no API key)")
+    log(f"  Scan interval: {SCAN_INTERVAL}s ({SCAN_INTERVAL // 60} min)")
+    log("  Signals: STRONG DIP / BUY DIP / WATCH")
+    log("  Criteria:")
+    log("    STRONG DIP — down 30%+ in 24h + recovering 2%+ in 1h")
+    log("    BUY DIP    — down 25%+ in 6h  + recovering 2%+ in 1h")
+    log("    WATCH      — down 20%+ in 6h or 25%+ in 24h, any recovery")
+    log("=" * 65)
+    print()
 
     while True:
         try:
-            log("--- Scan cycle start ---")
-
-            # Monitor existing positions
-            log("Checking open positions...")
-            monitor_open_positions(tracker)
-
-            # Scan for new entries
-            signals = scan_for_entries(tracker)
-            if signals:
-                log(f"Found {len(signals)} signal(s) — processing...")
-                process_signals(signals, tracker)
-            else:
-                log("No signals this cycle")
-
-            # Print summary
-            summary = tracker.summary()
-            open_count = tracker.open_position_count()
-            log(f"Open: {open_count} | Closed: {summary['total_trades']} | "
-                f"Win rate: {summary['win_rate']:.0f}% | Total PnL: {summary['total_pnl_sol']:+.4f} SOL")
-            log(f"--- Next scan in {SCAN_INTERVAL_SECONDS}s ---\n")
-
-            time.sleep(SCAN_INTERVAL_SECONDS)
-
+            scan_once()
+            log(f"Next scan in {SCAN_INTERVAL // 60} minutes...")
+            print()
+            time.sleep(SCAN_INTERVAL)
         except KeyboardInterrupt:
-            log("Scanner stopped by user")
+            print()
+            log("Scanner stopped.")
             break
         except Exception as e:
-            log(f"Error in scan cycle: {e}")
-            time.sleep(10)
+            log(f"Scan error: {e}")
+            time.sleep(30)
 
 
 if __name__ == "__main__":
-    run_scanner()
+    main()
