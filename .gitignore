@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+trades.json
+notified.json
+watchlist.json
+*.egg-info/
+.venv/
+dist/
