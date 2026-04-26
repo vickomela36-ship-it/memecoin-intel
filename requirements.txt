@@ -1,0 +1,2 @@
+# signals.py uses only the Python standard library (urllib, json, subprocess)
+# No third-party packages required.
