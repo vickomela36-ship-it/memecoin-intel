@@ -1,0 +1,2 @@
+# signals.py uses Python stdlib only (urllib, json, datetime)
+# No third-party packages required to run the signal engine.
