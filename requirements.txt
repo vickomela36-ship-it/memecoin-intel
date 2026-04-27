@@ -1,0 +1,6 @@
+# memecoin-intel dependencies
+# signals.py uses only stdlib (urllib, json) — no extra packages needed for core signal detection
+# Optional: install these for the dashboard and extended features
+streamlit>=1.32.0
+requests>=2.31.0
+python-dotenv>=1.0.0
