@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import config
 
-DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search/?q={query}"
+DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search?q={query}"
 
 
 def _fetch(url: str) -> dict:
