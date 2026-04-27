@@ -1,0 +1,5 @@
+# signals.py uses only the stdlib (urllib, json) – no extra deps needed for core logic.
+# Add below if you extend the project:
+# streamlit          # dashboard.py
+# requests           # optional drop-in for urllib
+# python-dotenv      # load .env for API keys
