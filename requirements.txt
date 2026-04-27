@@ -1,1 +1,2 @@
-# No external dependencies — stdlib only (urllib, json)
+# No external dependencies — uses stdlib only (urllib, smtplib, json)
+# Install notion-client or requests if you prefer SDK-style Notion access
