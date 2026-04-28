@@ -109,6 +109,42 @@ def run_signals() -> list[dict]:
     return results
 
 
+DEMO_SIGNALS = [
+    {
+        "token": "Bonk",
+        "symbol": "BONK",
+        "signal": "buy now",
+        "price_usd": "0.00002341",
+        "price_change_1h": "7.4",
+        "price_change_6h": "12.1",
+        "price_change_24h": "18.5",
+        "volume_24h_usd": "48200000",
+        "liquidity_usd": "9500000",
+        "buy_pressure": 72.3,
+        "dexscreener_url": "https://dexscreener.com/solana/DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    },
+    {
+        "token": "dogwifhat",
+        "symbol": "WIF",
+        "signal": "hold",
+        "price_usd": "1.87",
+        "price_change_1h": "1.2",
+        "price_change_6h": "-0.8",
+        "price_change_24h": "3.1",
+        "volume_24h_usd": "22000000",
+        "liquidity_usd": "4100000",
+        "buy_pressure": 54.0,
+        "dexscreener_url": "https://dexscreener.com/solana/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    },
+]
+
+
 if __name__ == "__main__":
-    signals = run_signals()
-    print(json.dumps(signals, indent=2))
+    import sys
+    if "--demo" in sys.argv:
+        print(json.dumps(DEMO_SIGNALS, indent=2))
+    else:
+        signals = run_signals()
+        print(json.dumps(signals, indent=2))
