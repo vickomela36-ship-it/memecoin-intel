@@ -84,5 +84,21 @@ def run() -> list[dict]:
     return results
 
 
+def mock_signals() -> list[dict]:
+    """Return one synthetic buy-now signal for pipeline testing."""
+    ts = datetime.now(timezone.utc).isoformat()
+    return [
+        {"signal": "buy now", "coin": "BONK", "price": 0.000021,
+         "confidence": 0.78, "notes": "1h +8.3%  |  vol ratio 2.3x  |  6h +12.1%",
+         "timestamp": ts},
+        {"signal": "hold",    "coin": "WIF",  "price": 1.84,
+         "confidence": 0.0,  "notes": "1h +1.2%  |  vol ratio 0.9x  |  6h +3.4%",
+         "timestamp": ts},
+    ]
+
+
 if __name__ == "__main__":
-    print(json.dumps(run(), indent=2))
+    if "--mock" in sys.argv:
+        print(json.dumps(mock_signals(), indent=2))
+    else:
+        print(json.dumps(run(), indent=2))
