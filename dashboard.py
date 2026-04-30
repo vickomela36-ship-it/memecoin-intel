@@ -31,6 +31,7 @@ GREEN = "#00e676"
 RED = "#ff1744"
 YELLOW = "#ffd600"
 BLUE = "#2979ff"
+ORANGE = "#ff9100"
 
 MIN_VOL_5M = 1_000
 MIN_LIQUIDITY = 5_000
@@ -222,6 +223,16 @@ def scan_tokens(tokens, min_vol_5m=MIN_VOL_5M, min_liq=MIN_LIQUIDITY,
         symbol = base.get("symbol", "?")
         pair_url = best.get("url", "")
 
+        vol_h1 = _safe_float(best, "volume", "h1")
+        vol_h6 = _safe_float(best, "volume", "h6")
+
+        txns = best.get("txns") or {}
+        boosts = token.get("totalAmount") or token.get("amount") or 0
+        try:
+            boosts = int(boosts)
+        except (ValueError, TypeError):
+            boosts = 0
+
         signal = classify_signal(h1, h6, h24, strong_dump, buy_dump,
                                  watch_dump, recovery)
         if signal != "SKIP":
@@ -237,11 +248,16 @@ def scan_tokens(tokens, min_vol_5m=MIN_VOL_5M, min_liq=MIN_LIQUIDITY,
             "h24_change": h24,
             "fdv": fdv,
             "vol_5m": vol_5m,
+            "vol_h1": vol_h1,
+            "vol_h6": vol_h6,
             "volume_24h": vol_24h,
             "liquidity": liquidity,
             "signal": signal,
             "target_2x": price_usd * 2,
             "pair_url": pair_url,
+            "txns": txns,
+            "boosts": boosts,
+            "pair_data": best,
         })
 
         time.sleep(0.15)
@@ -275,6 +291,204 @@ def fmt_usd(v):
 
 def signal_color(sig):
     return {"STRONG DIP": GREEN, "BUY DIP": BLUE, "WATCH": YELLOW}.get(sig, "#666")
+
+
+# ── Recommendations engine ──────────────────────────────────────────────────
+def compute_recommendations(price, h1, h6, h24, fdv, signal):
+    """Compute buy zone, sell targets, stop-loss, and mcap guidance."""
+    if price <= 0:
+        return None
+
+    sl_pct = 0.20
+    if signal == "STRONG DIP":
+        sl_pct = 0.15
+    elif signal == "BUY DIP":
+        sl_pct = 0.18
+
+    stop_loss = price * (1 - sl_pct)
+    target_2x = price * 2
+    target_3x = price * 3
+
+    dip_depth = min(h6, h24)
+    if dip_depth < -40:
+        buy_low = price * 0.92
+        buy_high = price * 1.02
+    elif dip_depth < -25:
+        buy_low = price * 0.95
+        buy_high = price * 1.03
+    else:
+        buy_low = price * 0.97
+        buy_high = price * 1.05
+
+    if fdv > 0:
+        mcap_target_2x = fdv * 2
+        mcap_target_3x = fdv * 3
+    else:
+        mcap_target_2x = mcap_target_3x = 0
+
+    if signal == "STRONG DIP":
+        conviction = "HIGH"
+    elif signal == "BUY DIP":
+        conviction = "MEDIUM"
+    else:
+        conviction = "LOW"
+
+    return {
+        "buy_low": buy_low,
+        "buy_high": buy_high,
+        "stop_loss": stop_loss,
+        "sl_pct": sl_pct * 100,
+        "target_2x": target_2x,
+        "target_3x": target_3x,
+        "mcap_now": fdv,
+        "mcap_2x": mcap_target_2x,
+        "mcap_3x": mcap_target_3x,
+        "conviction": conviction,
+    }
+
+
+def compute_volume_momentum(vol_m5, vol_h1, vol_h6, vol_24h):
+    """Detect volume acceleration across timeframes."""
+    indicators = []
+    score = 0
+
+    if vol_h1 > 0:
+        m5_rate = vol_m5 * 12
+        h1_accel = m5_rate / vol_h1 if vol_h1 > 0 else 0
+        if h1_accel > 2.0:
+            indicators.append(("5m vs 1h", h1_accel, "SURGING"))
+            score += 3
+        elif h1_accel > 1.3:
+            indicators.append(("5m vs 1h", h1_accel, "RISING"))
+            score += 2
+        elif h1_accel > 0.8:
+            indicators.append(("5m vs 1h", h1_accel, "STEADY"))
+            score += 1
+        else:
+            indicators.append(("5m vs 1h", h1_accel, "FADING"))
+
+    if vol_h6 > 0:
+        h1_rate = vol_h1 * 6
+        h6_accel = h1_rate / vol_h6 if vol_h6 > 0 else 0
+        if h6_accel > 1.5:
+            indicators.append(("1h vs 6h", h6_accel, "ACCELERATING"))
+            score += 2
+        elif h6_accel > 1.0:
+            indicators.append(("1h vs 6h", h6_accel, "BUILDING"))
+            score += 1
+        else:
+            indicators.append(("1h vs 6h", h6_accel, "DECLINING"))
+
+    if vol_24h > 0:
+        h6_rate = vol_h6 * 4
+        h24_accel = h6_rate / vol_24h if vol_24h > 0 else 0
+        if h24_accel > 1.5:
+            indicators.append(("6h vs 24h", h24_accel, "STRONG UPTICK"))
+            score += 2
+        elif h24_accel > 1.0:
+            indicators.append(("6h vs 24h", h24_accel, "INCREASING"))
+            score += 1
+        else:
+            indicators.append(("6h vs 24h", h24_accel, "COOLING"))
+
+    if score >= 6:
+        overall = "SURGING"
+    elif score >= 4:
+        overall = "STRONG"
+    elif score >= 2:
+        overall = "MODERATE"
+    else:
+        overall = "WEAK"
+
+    return {"indicators": indicators, "score": score, "overall": overall}
+
+
+def compute_sentiment(txns, boosts, pair_data):
+    """Aggregate on-chain sentiment from transaction counts and social signals."""
+    signals = []
+    score = 0
+
+    if txns:
+        for tf_label, tf_key in [("5m", "m5"), ("1h", "h1"), ("6h", "h6"), ("24h", "h24")]:
+            tf = txns.get(tf_key, {})
+            buys = int(tf.get("buys", 0) or 0)
+            sells = int(tf.get("sells", 0) or 0)
+            total = buys + sells
+            if total > 0:
+                buy_ratio = buys / total
+                signals.append({
+                    "tf": tf_label,
+                    "buys": buys,
+                    "sells": sells,
+                    "ratio": buy_ratio,
+                })
+                if buy_ratio > 0.60:
+                    score += 2
+                elif buy_ratio > 0.50:
+                    score += 1
+
+    recent_buy_ratio = 0
+    if signals:
+        recent_buy_ratio = signals[0]["ratio"]
+
+    if boosts and boosts > 0:
+        score += min(boosts // 10, 3)
+
+    has_website = False
+    has_twitter = False
+    has_telegram = False
+    info = pair_data.get("info") or {}
+    socials = info.get("socials") or []
+    websites = info.get("websites") or []
+    if websites:
+        has_website = True
+        score += 1
+    for s in socials:
+        stype = (s.get("type") or "").lower()
+        if "twitter" in stype or "x.com" in stype:
+            has_twitter = True
+            score += 1
+        if "telegram" in stype:
+            has_telegram = True
+            score += 1
+
+    if score >= 8:
+        overall = "VERY BULLISH"
+    elif score >= 5:
+        overall = "BULLISH"
+    elif score >= 3:
+        overall = "NEUTRAL"
+    else:
+        overall = "BEARISH"
+
+    return {
+        "txn_signals": signals,
+        "recent_buy_ratio": recent_buy_ratio,
+        "boosts": boosts or 0,
+        "has_website": has_website,
+        "has_twitter": has_twitter,
+        "has_telegram": has_telegram,
+        "score": score,
+        "overall": overall,
+    }
+
+
+def sentiment_color(overall):
+    return {
+        "VERY BULLISH": GREEN,
+        "BULLISH": BLUE,
+        "NEUTRAL": YELLOW,
+        "BEARISH": RED,
+    }.get(overall, "#666")
+
+
+def momentum_color(overall):
+    return {
+        "SURGING": GREEN,
+        "STRONG": BLUE,
+        "MODERATE": YELLOW,
+        "WEAK": RED,
+    }.get(overall, "#666")
 
 
 # ── Page setup ───────────────────────────────────────────────────────────────
@@ -475,6 +689,132 @@ with tab_scanner:
                             "DexScreener",
                             r["pair_url"],
                             use_container_width=True,
+                        )
+
+                # ── Expandable detail: Recommendations + Sentiment + Volume ──
+                with st.expander(
+                    f"Details: {r['symbol']} — Recommendations · Sentiment · Volume",
+                    expanded=False,
+                ):
+                    det1, det2, det3 = st.columns(3)
+
+                    # ── Recommendations ──────────────────────────────────
+                    rec = compute_recommendations(
+                        r["price_usd"], r["h1_change"], r["h6_change"],
+                        r["h24_change"], r["fdv"], r["signal"],
+                    )
+                    with det1:
+                        st.markdown("##### Trade Recommendation")
+                        if rec:
+                            conv_clr = {
+                                "HIGH": GREEN, "MEDIUM": BLUE, "LOW": YELLOW,
+                            }.get(rec["conviction"], "#666")
+                            st.markdown(
+                                f"Conviction: <b style='color:{conv_clr}'>"
+                                f"{rec['conviction']}</b>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                f"**Buy Zone:** {fmt_price(rec['buy_low'])} — "
+                                f"{fmt_price(rec['buy_high'])}"
+                            )
+                            st.markdown(
+                                f"**Stop-Loss:** {fmt_price(rec['stop_loss'])} "
+                                f"(-{rec['sl_pct']:.0f}%)"
+                            )
+                            st.markdown(
+                                f"**Target 2x:** {fmt_price(rec['target_2x'])}"
+                            )
+                            st.markdown(
+                                f"**Target 3x:** {fmt_price(rec['target_3x'])}"
+                            )
+                            if rec["mcap_now"] > 0:
+                                st.caption(
+                                    f"MCap now: {fmt_usd(rec['mcap_now'])} · "
+                                    f"2x: {fmt_usd(rec['mcap_2x'])} · "
+                                    f"3x: {fmt_usd(rec['mcap_3x'])}"
+                                )
+
+                    # ── Sentiment ─────────────────────────────────────────
+                    sent = compute_sentiment(
+                        r.get("txns", {}), r.get("boosts", 0),
+                        r.get("pair_data", {}),
+                    )
+                    with det2:
+                        st.markdown("##### Sentiment")
+                        s_clr = sentiment_color(sent["overall"])
+                        st.markdown(
+                            f"Overall: <b style='color:{s_clr}'>"
+                            f"{sent['overall']}</b> "
+                            f"(score {sent['score']})",
+                            unsafe_allow_html=True,
+                        )
+
+                        if sent["txn_signals"]:
+                            for ts in sent["txn_signals"]:
+                                br = ts["ratio"]
+                                bar_clr = GREEN if br > 0.55 else (
+                                    YELLOW if br > 0.45 else RED
+                                )
+                                st.markdown(
+                                    f"{ts['tf']}: "
+                                    f"<b style='color:{GREEN}'>{ts['buys']}B</b>"
+                                    f" / "
+                                    f"<b style='color:{RED}'>{ts['sells']}S</b>"
+                                    f" · Buy ratio "
+                                    f"<b style='color:{bar_clr}'>"
+                                    f"{br:.0%}</b>",
+                                    unsafe_allow_html=True,
+                                )
+
+                        social_parts = []
+                        if sent["has_website"]:
+                            social_parts.append("Website")
+                        if sent["has_twitter"]:
+                            social_parts.append("Twitter/X")
+                        if sent["has_telegram"]:
+                            social_parts.append("Telegram")
+                        if social_parts:
+                            st.caption(
+                                f"Socials: {', '.join(social_parts)}"
+                            )
+                        if sent["boosts"] > 0:
+                            st.caption(
+                                f"DexScreener boosts: {sent['boosts']}"
+                            )
+
+                    # ── Volume Momentum ───────────────────────────────────
+                    vmom = compute_volume_momentum(
+                        r.get("vol_5m", 0), r.get("vol_h1", 0),
+                        r.get("vol_h6", 0), r.get("volume_24h", 0),
+                    )
+                    with det3:
+                        st.markdown("##### Volume Momentum")
+                        m_clr = momentum_color(vmom["overall"])
+                        st.markdown(
+                            f"Flow: <b style='color:{m_clr}'>"
+                            f"{vmom['overall']}</b> "
+                            f"(score {vmom['score']}/7)",
+                            unsafe_allow_html=True,
+                        )
+                        for ind in vmom["indicators"]:
+                            i_clr = {
+                                "SURGING": GREEN, "RISING": BLUE,
+                                "ACCELERATING": GREEN, "BUILDING": BLUE,
+                                "STRONG UPTICK": GREEN, "INCREASING": BLUE,
+                                "STEADY": YELLOW, "FADING": RED,
+                                "DECLINING": RED, "COOLING": ORANGE,
+                            }.get(ind[2], "#666")
+                            st.markdown(
+                                f"{ind[0]}: **{ind[1]:.1f}x** — "
+                                f"<b style='color:{i_clr}'>{ind[2]}</b>",
+                                unsafe_allow_html=True,
+                            )
+                        st.caption(
+                            f"Vol 5m: {fmt_usd(r.get('vol_5m', 0))} · "
+                            f"1h: {fmt_usd(r.get('vol_h1', 0))} · "
+                            f"6h: {fmt_usd(r.get('vol_h6', 0))} · "
+                            f"24h: {fmt_usd(r.get('volume_24h', 0))}"
                         )
 
                 st.divider()
