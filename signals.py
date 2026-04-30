@@ -132,12 +132,35 @@ def generate_signals() -> list[dict]:
     return results
 
 
+def _demo_signals() -> list[dict]:
+    """Return a synthetic buy-now signal for pipeline testing (--demo flag)."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [{
+        "token": "PepeCoin (PEPE)",
+        "symbol": "PEPE",
+        "chain": "ethereum",
+        "signal": "buy now",
+        "price_usd": 0.00001423,
+        "change_1h": 7.3,
+        "change_6h": 12.1,
+        "change_24h": 28.4,
+        "volume_24h": 4_820_000,
+        "liquidity_usd": 980_000,
+        "market_cap": 5_990_000,
+        "pair_url": "https://dexscreener.com/ethereum/demo",
+        "reason": "+7.3% (1h) / +12.1% (6h) / +28.4% (24h) — vol $4,820,000 [DEMO]",
+        "timestamp": now,
+    }]
+
+
 if __name__ == "__main__":
-    signals = generate_signals()
+    demo = "--demo" in sys.argv
+    signals = _demo_signals() if demo else generate_signals()
     output = {
         "signals": signals,
         "count": len(signals),
         "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "demo": demo,
     }
     json.dump(output, sys.stdout, indent=2)
     print()  # trailing newline

@@ -13,7 +13,7 @@ Alert email target:               vickomela36@gmail.com
 
 import json
 import sys
-from signals import generate_signals
+from signals import generate_signals, _demo_signals
 
 NOTION_DATASOURCE_ID = "c7f3d2af-bf40-4406-9e7f-b998f7123168"
 ALERT_EMAIL = "vickomela36@gmail.com"
@@ -43,7 +43,8 @@ Scanned : {sig['timestamp']}
 
 
 if __name__ == "__main__":
-    signals = generate_signals()
+    demo = "--demo" in sys.argv
+    signals = _demo_signals() if demo else generate_signals()
 
     buy_signals = [s for s in signals if s["signal"] == "buy now"]
 
