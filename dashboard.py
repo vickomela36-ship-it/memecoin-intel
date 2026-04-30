@@ -21,7 +21,10 @@ from datetime import datetime, timezone
 # ── Config ────────────────────────────────────────────────────────────────────
 WATCHLIST_FILE = "watchlist.json"
 TRADES_FILE = "trades.json"
-DEXSCREENER_BOOSTS = "https://api.dexscreener.com/token-boosts/top/v1"
+DEXSCREENER_BOOSTS_TOP = "https://api.dexscreener.com/token-boosts/top/v1"
+DEXSCREENER_BOOSTS_LATEST = "https://api.dexscreener.com/token-boosts/latest/v1"
+DEXSCREENER_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
+DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
 DEXSCREENER_TOKEN = "https://api.dexscreener.com/latest/dex/tokens"
 
 GREEN = "#00e676"
@@ -51,15 +54,60 @@ def _save_json(path, data):
 
 # ── DexScreener API ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=120)
-def fetch_trending_tokens():
+def _fetch_endpoint(url):
+    """Fetch a DexScreener endpoint that returns a list of tokens."""
     try:
-        r = requests.get(DEXSCREENER_BOOSTS, timeout=15)
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
-        tokens = r.json()
-        return tokens if isinstance(tokens, list) else []
-    except Exception as e:
-        st.error(f"Failed to fetch trending tokens: {e}")
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except Exception:
         return []
+
+
+@st.cache_data(ttl=120)
+def _fetch_search(query):
+    """Search DexScreener pairs by query string."""
+    try:
+        r = requests.get(DEXSCREENER_SEARCH, params={"q": query}, timeout=15)
+        r.raise_for_status()
+        return r.json().get("pairs") or []
+    except Exception:
+        return []
+
+
+def fetch_trending_tokens():
+    """
+    Combine multiple DexScreener endpoints to widen the source pool.
+    Returns a deduplicated list of {tokenAddress, chainId} dicts.
+    """
+    pool = []
+    seen = set()
+
+    # 1. Top + latest boosts (richest signal — paid promotion)
+    for url in (DEXSCREENER_BOOSTS_TOP, DEXSCREENER_BOOSTS_LATEST,
+                DEXSCREENER_PROFILES):
+        for tok in _fetch_endpoint(url):
+            addr = tok.get("tokenAddress")
+            chain = tok.get("chainId")
+            if addr and addr not in seen and (not chain or chain == "solana"):
+                seen.add(addr)
+                pool.append({"tokenAddress": addr, "chainId": chain or "solana"})
+
+    # 2. Add Solana trending pairs from search (catches non-boosted movers)
+    for q in ("SOL", "PUMP", "MEME"):
+        for pair in _fetch_search(q):
+            if pair.get("chainId") != "solana":
+                continue
+            base = pair.get("baseToken") or {}
+            addr = base.get("address")
+            if addr and addr not in seen:
+                seen.add(addr)
+                pool.append({"tokenAddress": addr, "chainId": "solana"})
+
+    if not pool:
+        st.error("Failed to fetch any trending tokens from DexScreener.")
+    return pool
 
 
 @st.cache_data(ttl=60)
@@ -104,30 +152,39 @@ def _best_solana_pair(pairs):
     return max(sol_pairs, key=lambda p: _safe_float(p, "volume", "h24"))
 
 
-def classify_signal(h1, h6, h24):
-    recovering = h1 > 2.0
-    if h24 <= -30 and recovering:
+def classify_signal(h1, h6, h24, strong_dump=-30.0, buy_dump=-25.0,
+                    watch_dump=-20.0, recovery=2.0):
+    """
+    Classify dip recovery signal with tunable thresholds.
+    All dump values are negative (e.g. -30 means dropped 30%).
+    """
+    recovering = h1 > recovery
+    if h24 <= strong_dump and recovering:
         return "STRONG DIP"
-    if h6 <= -25 and recovering:
+    if h6 <= buy_dump and recovering:
         return "BUY DIP"
-    if (h6 <= -20 or h24 <= -25) and h1 > 0:
+    if (h6 <= watch_dump or h24 <= buy_dump) and h1 > 0:
         return "WATCH"
     return "SKIP"
 
 
-def scan_tokens(tokens):
+def scan_tokens(tokens, min_vol_5m=MIN_VOL_5M, min_liq=MIN_LIQUIDITY,
+                strong_dump=-30.0, buy_dump=-25.0, watch_dump=-20.0,
+                recovery=2.0):
     """Scan trending tokens for Solana dip recovery setups."""
     results = []
     seen = set()
+    stats = {"total": 0, "no_pair": 0, "filtered_vol_liq": 0, "matched": 0}
 
     solana_tokens = [
         t for t in tokens
         if t.get("tokenAddress")
         and (not t.get("chainId") or t.get("chainId") == "solana")
     ]
+    stats["total"] = len(solana_tokens)
 
     if not solana_tokens:
-        return results
+        return results, stats
 
     progress = st.progress(0, text="Scanning tokens...")
     total = len(solana_tokens)
@@ -143,12 +200,14 @@ def scan_tokens(tokens):
         pairs = fetch_pair_data(address)
         best = _best_solana_pair(pairs)
         if not best:
+            stats["no_pair"] += 1
             continue
 
         vol_5m = _safe_float(best, "volume", "m5")
         liquidity = _safe_float(best, "liquidity", "usd")
 
-        if vol_5m < MIN_VOL_5M or liquidity < MIN_LIQUIDITY:
+        if vol_5m < min_vol_5m or liquidity < min_liq:
+            stats["filtered_vol_liq"] += 1
             continue
 
         h1 = _safe_float(best, "priceChange", "h1")
@@ -163,7 +222,10 @@ def scan_tokens(tokens):
         symbol = base.get("symbol", "?")
         pair_url = best.get("url", "")
 
-        signal = classify_signal(h1, h6, h24)
+        signal = classify_signal(h1, h6, h24, strong_dump, buy_dump,
+                                 watch_dump, recovery)
+        if signal != "SKIP":
+            stats["matched"] += 1
 
         results.append({
             "address": address,
@@ -182,10 +244,10 @@ def scan_tokens(tokens):
             "pair_url": pair_url,
         })
 
-        time.sleep(0.2)
+        time.sleep(0.15)
 
     progress.empty()
-    return results
+    return results, stats
 
 
 # ── Formatting helpers ───────────────────────────────────────────────────────
@@ -239,9 +301,52 @@ tab_scanner, tab_watchlist, tab_tradelog = st.tabs(
 with tab_scanner:
     st.markdown("### Scan trending tokens for dip recoveries")
     st.caption(
-        "DexScreener Boosted Tokens → Solana only → "
-        f"Vol(5m) > ${MIN_VOL_5M:,} · Liq > ${MIN_LIQUIDITY:,}"
+        "Sources: DexScreener Boosts (top + latest) + Token Profiles + Search"
     )
+
+    # ── Filter presets ──────────────────────────────────────────────────────
+    preset = st.radio(
+        "Strictness preset",
+        ["Loose (more results)", "Normal", "Strict (best setups only)"],
+        index=0,
+        horizontal=True,
+    )
+
+    if preset == "Loose (more results)":
+        d_strong, d_buy, d_watch, d_rec = -20.0, -15.0, -10.0, 0.0
+        d_vol, d_liq = 200, 2_000
+    elif preset == "Normal":
+        d_strong, d_buy, d_watch, d_rec = -25.0, -20.0, -15.0, 1.0
+        d_vol, d_liq = 500, 3_000
+    else:  # Strict
+        d_strong, d_buy, d_watch, d_rec = -30.0, -25.0, -20.0, 2.0
+        d_vol, d_liq = 1_000, 5_000
+
+    with st.expander("Advanced filters", expanded=False):
+        c_a, c_b = st.columns(2)
+        with c_a:
+            d_strong = st.slider(
+                "STRONG DIP — 24h drop ≤", -60.0, -10.0, d_strong, step=1.0,
+                help="Token must have dropped this much in 24h to qualify as STRONG DIP",
+            )
+            d_buy = st.slider(
+                "BUY DIP — 6h drop ≤", -50.0, -5.0, d_buy, step=1.0,
+                help="Token must have dropped this much in 6h to qualify as BUY DIP",
+            )
+            d_watch = st.slider(
+                "WATCH — 6h drop ≤", -40.0, -5.0, d_watch, step=1.0,
+            )
+            d_rec = st.slider(
+                "Recovery threshold — 1h change >", -2.0, 10.0, d_rec, step=0.5,
+                help="Token must be bouncing this much in the last hour. Lower = more results.",
+            )
+        with c_b:
+            d_vol = st.number_input(
+                "Min 5m volume ($)", 0, 100_000, d_vol, step=100,
+            )
+            d_liq = st.number_input(
+                "Min liquidity ($)", 0, 1_000_000, d_liq, step=1_000,
+            )
 
     col_btn, col_filter = st.columns([1, 3])
     with col_btn:
@@ -258,8 +363,14 @@ with tab_scanner:
     if scan_clicked:
         trending = fetch_trending_tokens()
         if trending:
-            results = scan_tokens(trending)
+            results, stats = scan_tokens(
+                trending,
+                min_vol_5m=d_vol, min_liq=d_liq,
+                strong_dump=d_strong, buy_dump=d_buy,
+                watch_dump=d_watch, recovery=d_rec,
+            )
             st.session_state["scan_results"] = results
+            st.session_state["scan_stats"] = stats
             st.session_state["scan_time"] = datetime.now(timezone.utc).strftime(
                 "%H:%M:%S UTC"
             )
@@ -267,12 +378,21 @@ with tab_scanner:
             st.warning("No trending tokens returned from DexScreener.")
 
     results = st.session_state.get("scan_results", [])
+    stats = st.session_state.get("scan_stats", {})
     scan_time = st.session_state.get("scan_time", "")
+
+    # Show breakdown so user knows where filtering happened
+    if stats:
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Tokens fetched", stats.get("total", 0))
+        s2.metric("No Solana pair", stats.get("no_pair", 0))
+        s3.metric("Below vol/liq", stats.get("filtered_vol_liq", 0))
+        s4.metric("Matched signal", stats.get("matched", 0))
 
     if results:
         filtered = [r for r in results if r["signal"] in show_filter]
-        rank = {"STRONG DIP": 0, "BUY DIP": 1, "WATCH": 2}
-        filtered.sort(key=lambda r: rank.get(r["signal"], 99))
+        rank = {"STRONG DIP": 0, "BUY DIP": 1, "WATCH": 2, "SKIP": 3}
+        filtered.sort(key=lambda r: (rank.get(r["signal"], 99), -r["h1_change"]))
 
         st.caption(
             f"Found {len(filtered)} signal(s) out of "
