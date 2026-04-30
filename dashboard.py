@@ -479,6 +479,19 @@ with tab_tradelog:
 
     trades = _load_json(TRADES_FILE)
 
+    # Normalise old-format trades (seed_data.py used different keys)
+    for t in trades:
+        if "token_name" in t and "symbol" not in t:
+            t["symbol"] = t["token_name"]
+        if "mint_address" in t and "address" not in t:
+            t["address"] = t["mint_address"]
+        if "entry_time" in t and "opened_at" not in t:
+            t["opened_at"] = t["entry_time"]
+        if "exit_time" in t and "closed_at" not in t:
+            t["closed_at"] = t["exit_time"]
+        if "exit_reason" in t and "notes" not in t:
+            t["notes"] = t.get("signal_reason", t.get("exit_reason", ""))
+
     # ── Summary metrics ──────────────────────────────────────────────────────
     open_trades = [t for t in trades if t.get("status") == "OPEN"]
     closed_trades = [t for t in trades if t.get("status") == "CLOSED"]
