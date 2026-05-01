@@ -1,0 +1,5 @@
+signals.log
+signals_override.json
+__pycache__/
+*.pyc
+.env
