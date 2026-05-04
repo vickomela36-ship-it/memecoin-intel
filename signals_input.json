@@ -1,0 +1,13 @@
+[
+  {
+    "token": "EXAMPLE",
+    "token_name": "Example Token",
+    "token_address": "ExampleAddress123",
+    "chain": "solana",
+    "price_usd": 0.00042,
+    "price_change_1h_pct": 18.5,
+    "liquidity_usd": 125000,
+    "volume_24h_usd": 890000,
+    "dexscreener_url": "https://dexscreener.com/solana/ExampleAddress123"
+  }
+]

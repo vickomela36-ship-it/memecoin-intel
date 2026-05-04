@@ -1,76 +1,85 @@
 #!/usr/bin/env python3
 """
-Memecoin buy signal scanner using DexScreener API.
-Outputs a JSON array of buy signals to stdout.
+Memecoin buy signal scanner.
+
+Signal source: reads from signals_input.json (populated by the user's data feed).
+Alternatively, set SIGNALS_URL env var to an internal/local API endpoint.
+
+Output: JSON array of buy-now signals to stdout.
+
+signals_input.json format — array of token objects:
+[
+  {
+    "token": "BONK",
+    "token_name": "Bonk",
+    "token_address": "DezXAZ8z...",
+    "chain": "solana",
+    "price_usd": 0.00002341,
+    "price_change_1h_pct": 12.5,
+    "liquidity_usd": 850000,
+    "volume_24h_usd": 4200000,
+    "dexscreener_url": "https://dexscreener.com/solana/DezXAZ8z..."
+  }
+]
 """
 import json
+import os
 import sys
-import requests
+from pathlib import Path
 
 SIGNAL_CRITERIA = {
-    "min_liquidity_usd": 10_000,
-    "min_volume_24h": 50_000,
-    "min_price_change_1h_pct": 5.0,
-    "max_price_change_1h_pct": 200.0,  # filter extreme pumps
+    "min_liquidity_usd": float(os.getenv("MIN_LIQUIDITY", "10000")),
+    "min_volume_24h": float(os.getenv("MIN_VOLUME_24H", "50000")),
+    "min_price_change_1h_pct": float(os.getenv("MIN_PRICE_CHANGE_1H", "5.0")),
+    "max_price_change_1h_pct": float(os.getenv("MAX_PRICE_CHANGE_1H", "200.0")),
 }
 
-SUPPORTED_CHAINS = {"solana", "ethereum", "bsc", "base"}
-
-BOOSTED_TOKENS_URL = "https://api.dexscreener.com/token-boosts/top/v1"
-TOKEN_PAIRS_URL = "https://api.dexscreener.com/latest/dex/tokens/{address}"
+INPUT_FILE = Path(__file__).parent / "signals_input.json"
 
 
-def fetch_boosted_tokens(limit: int = 30) -> list[tuple[str, str]]:
-    resp = requests.get(BOOSTED_TOKENS_URL, timeout=10)
-    resp.raise_for_status()
-    results = []
-    for item in resp.json():
-        chain = item.get("chainId", "")
-        addr = item.get("tokenAddress", "")
-        if chain in SUPPORTED_CHAINS and addr:
-            results.append((chain, addr))
-        if len(results) >= limit:
-            break
-    return results
+def load_candidates() -> list[dict]:
+    signals_url = os.getenv("SIGNALS_URL")
+    if signals_url:
+        import urllib.request
+        with urllib.request.urlopen(signals_url, timeout=10) as r:
+            return json.loads(r.read())
+
+    if not INPUT_FILE.exists():
+        print(
+            f"[signals.py] No input: create {INPUT_FILE} or set SIGNALS_URL",
+            file=sys.stderr,
+        )
+        return []
+
+    with INPUT_FILE.open() as f:
+        return json.load(f)
 
 
-def best_pair_for_token(token_address: str) -> dict | None:
-    url = TOKEN_PAIRS_URL.format(address=token_address)
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    pairs = resp.json().get("pairs") or []
-    if not pairs:
-        return None
-    return max(pairs, key=lambda p: float((p.get("liquidity") or {}).get("usd", 0)))
-
-
-def evaluate(pair: dict) -> dict | None:
+def evaluate(token: dict) -> dict | None:
     try:
-        liquidity = float((pair.get("liquidity") or {}).get("usd", 0))
-        volume_24h = float((pair.get("volume") or {}).get("h24", 0))
-        price_change_1h = float((pair.get("priceChange") or {}).get("h1", 0))
-        price_usd = float(pair.get("priceUsd") or 0)
+        liquidity = float(token.get("liquidity_usd") or 0)
+        volume_24h = float(token.get("volume_24h_usd") or 0)
+        price_change = float(token.get("price_change_1h_pct") or 0)
 
         c = SIGNAL_CRITERIA
         if not (
             liquidity >= c["min_liquidity_usd"]
             and volume_24h >= c["min_volume_24h"]
-            and c["min_price_change_1h_pct"] <= price_change_1h <= c["max_price_change_1h_pct"]
+            and c["min_price_change_1h_pct"] <= price_change <= c["max_price_change_1h_pct"]
         ):
             return None
 
-        base = pair.get("baseToken") or {}
         return {
             "signal": "buy now",
-            "token": base.get("symbol", "UNKNOWN"),
-            "token_name": base.get("name", ""),
-            "token_address": base.get("address", ""),
-            "chain": pair.get("chainId", ""),
-            "price_usd": price_usd,
-            "price_change_1h_pct": price_change_1h,
+            "token": token.get("token", "UNKNOWN"),
+            "token_name": token.get("token_name", ""),
+            "token_address": token.get("token_address", ""),
+            "chain": token.get("chain", ""),
+            "price_usd": float(token.get("price_usd") or 0),
+            "price_change_1h_pct": price_change,
             "liquidity_usd": liquidity,
             "volume_24h_usd": volume_24h,
-            "dexscreener_url": pair.get("url", ""),
+            "dexscreener_url": token.get("dexscreener_url", ""),
         }
     except (TypeError, ValueError):
         return None
@@ -78,23 +87,13 @@ def evaluate(pair: dict) -> dict | None:
 
 def main() -> None:
     try:
-        tokens = fetch_boosted_tokens()
+        candidates = load_candidates()
     except Exception as exc:
-        print(json.dumps({"error": f"Failed to fetch boosted tokens: {exc}"}), file=sys.stderr)
+        print(f"[signals.py] Failed to load candidates: {exc}", file=sys.stderr)
         print("[]")
         return
 
-    buy_signals: list[dict] = []
-    for chain_id, token_address in tokens:
-        try:
-            pair = best_pair_for_token(token_address)
-            if pair:
-                signal = evaluate(pair)
-                if signal:
-                    buy_signals.append(signal)
-        except Exception:
-            continue
-
+    buy_signals = [s for t in candidates if (s := evaluate(t))]
     print(json.dumps(buy_signals, indent=2))
 
 
