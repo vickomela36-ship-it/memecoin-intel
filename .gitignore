@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.env
+signal_run.log
