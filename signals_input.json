@@ -1,0 +1,12 @@
+[
+  {
+    "chainId": "solana",
+    "pairAddress": "STUB_PAIR_1",
+    "baseToken": {"name": "ExampleMeme", "symbol": "XMEME"},
+    "priceUsd": "0.000421",
+    "priceChange": {"h1": 18.5, "h24": 62.3},
+    "volume": {"h24": 820000},
+    "liquidity": {"usd": 135000},
+    "txns": {"h24": {"buys": 420, "sells": 180}}
+  }
+]

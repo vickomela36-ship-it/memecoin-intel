@@ -7,6 +7,7 @@ Output: JSON array of signal objects to stdout
 """
 
 import json
+import pathlib
 import sys
 import time
 from datetime import datetime, timezone
@@ -18,6 +19,11 @@ TRENDING_URL = "https://api.dexscreener.com/latest/dex/search?q=trending"
 
 # Chains we care about
 TARGET_CHAINS = {"solana", "ethereum", "base", "bsc"}
+
+# Path to optional local override file. If present and non-empty, its pairs
+# are used instead of hitting the network. Useful for testing or air-gapped
+# environments. Expected format: same as DexScreener pairs list JSON.
+LOCAL_PAIRS_FILE = pathlib.Path(__file__).parent / "signals_input.json"
 
 # Scoring thresholds
 BUY_NOW_MIN_SCORE = 72
@@ -31,7 +37,15 @@ SCORE_WEIGHTS = {
 
 
 def fetch_trending_pairs() -> list[dict]:
-    """Fetch top boosted / trending pairs from DexScreener."""
+    """Fetch top boosted / trending pairs, with local-file fallback."""
+    if LOCAL_PAIRS_FILE.exists():
+        try:
+            data = json.loads(LOCAL_PAIRS_FILE.read_text())
+            if isinstance(data, list) and data:
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+
     pairs = []
     headers = {"User-Agent": "memecoin-intel/1.0"}
 
