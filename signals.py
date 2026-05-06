@@ -13,7 +13,11 @@ import urllib.request
 import json
 
 
-DEXSCREENER_TRENDING_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
+# Primary: token profiles (requires no auth). Fallback: boosted tokens.
+DEXSCREENER_TRENDING_URLS = [
+    "https://api.dexscreener.com/token-profiles/latest/v1",
+    "https://api.dexscreener.com/token-boosts/top/v1",
+]
 DEXSCREENER_PAIRS_URL = "https://api.dexscreener.com/latest/dex/tokens/{}"
 
 BUY_MIN_PRICE_CHANGE_1H = 5.0    # %
@@ -29,10 +33,16 @@ def _get(url: str) -> dict | list:
 
 def get_signals() -> list[dict]:
     """Return list of tokens with signal='buy now' based on current market data."""
-    try:
-        profiles = _get(DEXSCREENER_TRENDING_URL)
-    except Exception as e:
-        return [{"error": str(e)}]
+    profiles = None
+    last_err = None
+    for url in DEXSCREENER_TRENDING_URLS:
+        try:
+            profiles = _get(url)
+            break
+        except Exception as e:
+            last_err = e
+    if profiles is None:
+        return [{"error": str(last_err), "fetch_failed": True}]
 
     results = []
     seen = set()
