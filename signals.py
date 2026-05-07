@@ -94,6 +94,26 @@ def _error(msg: str) -> dict:
     return {"signal": "error", "reason": msg, "timestamp": _now()}
 
 
+def _demo_buy_signal() -> dict:
+    """Returns a fake 'buy now' signal for pipeline testing."""
+    return {
+        "signal":          "buy now",
+        "token":           "DEMO",
+        "token_address":   "DemoAddress111111111111111111111111111111111",
+        "chain":           "solana",
+        "price_usd":       0.00004269,
+        "price_change_1h": 42.0,
+        "liquidity_usd":   85_000,
+        "volume_24h":      210_000,
+        "dex_url":         "https://dexscreener.com/solana/demo",
+        "timestamp":       _now(),
+    }
+
+
 if __name__ == "__main__":
     import json
-    print(json.dumps(get_signal(), indent=2))
+    import sys
+    if "--demo" in sys.argv:
+        print(json.dumps(_demo_buy_signal(), indent=2))
+    else:
+        print(json.dumps(get_signal(), indent=2))
