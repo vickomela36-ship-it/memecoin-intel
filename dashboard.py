@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 # ── Config ────────────────────────────────────────────────────────────────────
 WATCHLIST_FILE = "watchlist.json"
 TRADES_FILE = "trades.json"
+SIGNALS_FILE = "signals_log.json"
 DEXSCREENER_BOOSTS_TOP = "https://api.dexscreener.com/token-boosts/top/v1"
 DEXSCREENER_BOOSTS_LATEST = "https://api.dexscreener.com/token-boosts/latest/v1"
 DEXSCREENER_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
@@ -491,6 +492,155 @@ def momentum_color(overall):
     }.get(overall, "#666")
 
 
+# ── Trade duration + buy action engine ──────────────────────────────────────
+def classify_trade_duration(h1, h6, h24, vol_momentum_score, liquidity):
+    """Classify as SHORT (scalp 1-6h) or LONG (swing 6-48h)."""
+    if h1 > 5 and vol_momentum_score >= 4:
+        return "SHORT", "1-6h scalp — fast bounce with volume surge"
+    if h24 < -40 and 0 < h1 < 5:
+        return "LONG", "6-48h swing — deep dip, early recovery phase"
+    if h6 < -30 and h1 > 2:
+        return "LONG", "6-24h swing — significant dip still unwinding"
+    if vol_momentum_score >= 5 and h1 > 3:
+        return "SHORT", "2-8h scalp — momentum-driven recovery"
+    if h24 < -25 and h1 < 3:
+        return "LONG", "12-48h swing — gradual recovery expected"
+    if liquidity > 100_000 and h1 > 2:
+        return "SHORT", "2-6h scalp — high liquidity fast mover"
+    return "LONG", "6-24h swing — standard recovery play"
+
+
+def compute_buy_action(signal, sentiment_score, vol_momentum_score, h1,
+                       recent_buy_ratio):
+    """Return explicit BUY NOW / BUY ON DIP / WAIT / AVOID recommendation."""
+    score = 0
+    if signal == "STRONG DIP":
+        score += 3
+    elif signal == "BUY DIP":
+        score += 2
+    elif signal == "WATCH":
+        score += 1
+    if sentiment_score >= 5:
+        score += 2
+    elif sentiment_score >= 3:
+        score += 1
+    if vol_momentum_score >= 4:
+        score += 2
+    elif vol_momentum_score >= 2:
+        score += 1
+    if h1 > 5:
+        score += 1
+    if recent_buy_ratio > 0.60:
+        score += 1
+
+    if score >= 7:
+        return "BUY NOW", "Strong setup — all indicators align"
+    if score >= 5:
+        return "BUY ON DIP", "Good setup — enter at buy zone low for better R/R"
+    if score >= 3:
+        return "WAIT", "Developing — monitor for stronger confirmation"
+    return "AVOID", "Weak setup — insufficient recovery signals"
+
+
+def buy_action_color(action):
+    return {
+        "BUY NOW": GREEN,
+        "BUY ON DIP": BLUE,
+        "WAIT": YELLOW,
+        "AVOID": RED,
+    }.get(action, "#666")
+
+
+def duration_color(dur):
+    return {"SHORT": ORANGE, "LONG": BLUE}.get(dur, "#666")
+
+
+# ── Signal logging + 2x hit tracker ────────────────────────────────────────
+def log_signals(results):
+    """Persist non-SKIP signals for 2x ROI tracking."""
+    signals = _load_json(SIGNALS_FILE)
+    existing_keys = set()
+    for s in signals:
+        existing_keys.add((s.get("address", ""), s.get("signal_time", "")[:10]))
+
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+
+    for r in results:
+        if r.get("signal") == "SKIP":
+            continue
+        key = (r["address"], now[:10])
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        signals.append({
+            "address": r["address"],
+            "symbol": r["symbol"],
+            "signal": r["signal"],
+            "signal_price": r["price_usd"],
+            "signal_time": now,
+            "target_2x": r["price_usd"] * 2,
+            "duration_class": r.get("duration_class", "LONG"),
+            "buy_action": r.get("buy_action", "WAIT"),
+            "buy_action_reason": r.get("buy_action_reason", ""),
+            "hit_2x": False,
+            "hit_2x_time": None,
+            "hit_2x_price": None,
+            "peak_price": r["price_usd"],
+            "peak_roi_pct": 0.0,
+            "checked_at": now,
+        })
+        added += 1
+
+    if added:
+        _save_json(SIGNALS_FILE, signals)
+    return signals, added
+
+
+def check_2x_hits():
+    """Check open signals against live prices, mark 2x hits."""
+    signals = _load_json(SIGNALS_FILE)
+    if not signals:
+        return signals, 0, 0
+
+    updated = False
+    new_hits = 0
+    checked = 0
+
+    for s in signals:
+        if s.get("hit_2x"):
+            continue
+        target = s.get("target_2x", 0)
+        if target <= 0:
+            continue
+
+        pairs = fetch_pair_data(s["address"])
+        best = _best_solana_pair(pairs)
+        if not best:
+            continue
+        checked += 1
+
+        current = _safe_float(best, "priceUsd")
+        entry = s.get("signal_price", 0)
+        if entry > 0 and current > s.get("peak_price", 0):
+            s["peak_price"] = current
+            s["peak_roi_pct"] = round((current - entry) / entry * 100, 2)
+            updated = True
+
+        s["checked_at"] = datetime.now(timezone.utc).isoformat()
+
+        if current >= target:
+            s["hit_2x"] = True
+            s["hit_2x_time"] = datetime.now(timezone.utc).isoformat()
+            s["hit_2x_price"] = current
+            new_hits += 1
+            updated = True
+
+    if updated:
+        _save_json(SIGNALS_FILE, signals)
+    return signals, new_hits, checked
+
+
 # ── Page setup ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Memecoin Swing Scanner", layout="wide")
 st.markdown(
@@ -504,8 +654,8 @@ st.markdown(
 
 st.markdown("# Memecoin Swing Recovery Scanner")
 
-tab_scanner, tab_watchlist, tab_tradelog = st.tabs(
-    ["Scanner", "Watchlist", "Trade Log"]
+tab_scanner, tab_watchlist, tab_tradelog, tab_scoreboard = st.tabs(
+    ["Scanner", "Watchlist", "Trade Log", "Signal Scoreboard"]
 )
 
 
@@ -583,6 +733,35 @@ with tab_scanner:
                 strong_dump=d_strong, buy_dump=d_buy,
                 watch_dump=d_watch, recovery=d_rec,
             )
+
+            for r in results:
+                if r["signal"] == "SKIP":
+                    continue
+                vmom = compute_volume_momentum(
+                    r.get("vol_5m", 0), r.get("vol_h1", 0),
+                    r.get("vol_h6", 0), r.get("volume_24h", 0),
+                )
+                sent = compute_sentiment(
+                    r.get("txns", {}), r.get("boosts", 0),
+                    r.get("pair_data", {}),
+                )
+                dur_class, dur_reason = classify_trade_duration(
+                    r["h1_change"], r["h6_change"], r["h24_change"],
+                    vmom["score"], r["liquidity"],
+                )
+                action, action_reason = compute_buy_action(
+                    r["signal"], sent["score"], vmom["score"],
+                    r["h1_change"], sent["recent_buy_ratio"],
+                )
+                r["duration_class"] = dur_class
+                r["duration_reason"] = dur_reason
+                r["buy_action"] = action
+                r["buy_action_reason"] = action_reason
+
+            _, sig_added = log_signals(results)
+            if sig_added:
+                st.toast(f"Logged {sig_added} new signal(s) to scoreboard")
+
             st.session_state["scan_results"] = results
             st.session_state["scan_stats"] = stats
             st.session_state["scan_time"] = datetime.now(timezone.utc).strftime(
@@ -618,6 +797,10 @@ with tab_scanner:
         else:
             for r in filtered:
                 sig_bg = signal_color(r["signal"])
+                ba = r.get("buy_action", "WAIT")
+                ba_clr = buy_action_color(ba)
+                dc = r.get("duration_class", "LONG")
+                dc_clr = duration_color(dc)
 
                 c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 2])
 
@@ -626,10 +809,19 @@ with tab_scanner:
                         f"**{r['symbol']}** · {r['name'][:30]}<br>"
                         f"<span class='signal-tag' style='background:{sig_bg}20;"
                         f"color:{sig_bg};border:1px solid {sig_bg}'>"
-                        f"{r['signal']}</span>",
+                        f"{r['signal']}</span> "
+                        f"<span class='signal-tag' style='background:{ba_clr}20;"
+                        f"color:{ba_clr};border:1px solid {ba_clr}'>"
+                        f"{ba}</span> "
+                        f"<span class='signal-tag' style='background:{dc_clr}20;"
+                        f"color:{dc_clr};border:1px solid {dc_clr}'>"
+                        f"{dc}</span>",
                         unsafe_allow_html=True,
                     )
-                    st.caption(f"`{r['address'][:24]}...`")
+                    st.caption(
+                        f"`{r['address'][:24]}...` · "
+                        f"{r.get('duration_reason', '')}"
+                    )
 
                 with c2:
                     st.metric("Price", fmt_price(r["price_usd"]))
@@ -705,15 +897,22 @@ with tab_scanner:
                     )
                     with det1:
                         st.markdown("##### Trade Recommendation")
+                        ba_r = r.get("buy_action", "WAIT")
+                        ba_r_clr = buy_action_color(ba_r)
+                        st.markdown(
+                            f"Action: <b style='color:{ba_r_clr};font-size:16px'>"
+                            f"{ba_r}</b>",
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(r.get("buy_action_reason", ""))
+                        dc_r = r.get("duration_class", "LONG")
+                        dc_r_clr = duration_color(dc_r)
+                        st.markdown(
+                            f"Duration: <b style='color:{dc_r_clr}'>"
+                            f"{dc_r}</b> · {r.get('duration_reason', '')}",
+                            unsafe_allow_html=True,
+                        )
                         if rec:
-                            conv_clr = {
-                                "HIGH": GREEN, "MEDIUM": BLUE, "LOW": YELLOW,
-                            }.get(rec["conviction"], "#666")
-                            st.markdown(
-                                f"Conviction: <b style='color:{conv_clr}'>"
-                                f"{rec['conviction']}</b>",
-                                unsafe_allow_html=True,
-                            )
                             st.markdown(
                                 f"**Buy Zone:** {fmt_price(rec['buy_low'])} — "
                                 f"{fmt_price(rec['buy_high'])}"
@@ -723,10 +922,8 @@ with tab_scanner:
                                 f"(-{rec['sl_pct']:.0f}%)"
                             )
                             st.markdown(
-                                f"**Target 2x:** {fmt_price(rec['target_2x'])}"
-                            )
-                            st.markdown(
-                                f"**Target 3x:** {fmt_price(rec['target_3x'])}"
+                                f"**Target 2x:** {fmt_price(rec['target_2x'])} · "
+                                f"**3x:** {fmt_price(rec['target_3x'])}"
                             )
                             if rec["mcap_now"] > 0:
                                 st.caption(
@@ -1117,6 +1314,201 @@ with tab_tradelog:
         )
     else:
         st.info("No trades logged yet. Use the form above to log your first trade.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — SIGNAL SCOREBOARD
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_scoreboard:
+    st.markdown("### Signal Scoreboard — 2x ROI Tracker")
+    st.caption(
+        "Every buy signal is recorded here. The scanner checks live prices "
+        "and marks signals that hit 2x ROI."
+    )
+
+    all_signals = _load_json(SIGNALS_FILE)
+
+    sb_c1, sb_c2 = st.columns([1, 3])
+    with sb_c1:
+        check_clicked = st.button(
+            "Check 2x Hits Now", type="primary", use_container_width=True,
+        )
+    with sb_c2:
+        st.caption(
+            "Fetches live prices for all open signals and marks any that hit 2x."
+        )
+
+    if check_clicked and all_signals:
+        with st.spinner("Checking live prices..."):
+            all_signals, new_hits, checked = check_2x_hits()
+        if new_hits:
+            st.success(f"New 2x hits: {new_hits} (checked {checked} signals)")
+        else:
+            st.info(f"No new 2x hits (checked {checked} open signals)")
+
+    if all_signals:
+        hits = [s for s in all_signals if s.get("hit_2x")]
+        pending = [s for s in all_signals if not s.get("hit_2x")]
+
+        total_signals = len(all_signals)
+        total_hits = len(hits)
+        hit_rate = (total_hits / total_signals * 100) if total_signals > 0 else 0
+
+        short_signals = [s for s in all_signals if s.get("duration_class") == "SHORT"]
+        long_signals = [s for s in all_signals if s.get("duration_class") != "SHORT"]
+        short_hits = [s for s in short_signals if s.get("hit_2x")]
+        long_hits = [s for s in long_signals if s.get("hit_2x")]
+
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+        mc1.metric("Total Signals", total_signals)
+        mc2.metric("2x Hits", total_hits)
+        mc3.metric("Hit Rate", f"{hit_rate:.0f}%")
+        mc4.metric(
+            "SHORT hits",
+            f"{len(short_hits)}/{len(short_signals)}"
+            if short_signals else "0",
+        )
+        mc5.metric(
+            "LONG hits",
+            f"{len(long_hits)}/{len(long_signals)}"
+            if long_signals else "0",
+        )
+
+        st.divider()
+
+        # ── 2x Hit Log ──────────────────────────────────────────────────────
+        if hits:
+            st.markdown(
+                f"#### 2x Hits ({len(hits)})"
+            )
+            hit_rows = []
+            for s in sorted(hits, key=lambda x: x.get("hit_2x_time", ""),
+                            reverse=True):
+                entry_p = s.get("signal_price", 0)
+                hit_p = s.get("hit_2x_price", 0)
+                roi = ((hit_p - entry_p) / entry_p * 100) if entry_p > 0 else 0
+                sig_time = s.get("signal_time", "")[:16]
+                hit_time = (s.get("hit_2x_time") or "")[:16]
+                hit_rows.append({
+                    "Symbol": s.get("symbol", "?"),
+                    "Signal": s.get("signal", "?"),
+                    "Duration": s.get("duration_class", "?"),
+                    "Action": s.get("buy_action", "?"),
+                    "Entry Price": fmt_price(entry_p),
+                    "2x Price": fmt_price(hit_p),
+                    "ROI": f"{roi:+.0f}%",
+                    "Signal Time": sig_time,
+                    "Hit Time": hit_time,
+                })
+
+            hit_df = pd.DataFrame(hit_rows)
+            st.dataframe(
+                hit_df.style.apply(
+                    lambda row: [f"color: {GREEN}"] * len(row), axis=1
+                ),
+                hide_index=True,
+                height=min(400, 50 + len(hit_rows) * 38),
+            )
+
+        # ── Pending Signals ──────────────────────────────────────────────────
+        if pending:
+            st.markdown(f"#### Pending Signals ({len(pending)})")
+            pend_rows = []
+            for s in sorted(pending, key=lambda x: x.get("signal_time", ""),
+                            reverse=True):
+                entry_p = s.get("signal_price", 0)
+                peak = s.get("peak_roi_pct", 0)
+                target = s.get("target_2x", 0)
+                progress = (
+                    min(entry_p and (s.get("peak_price", entry_p)) / target, 1.0)
+                    if target > 0 else 0
+                )
+                pend_rows.append({
+                    "Symbol": s.get("symbol", "?"),
+                    "Signal": s.get("signal", "?"),
+                    "Duration": s.get("duration_class", "?"),
+                    "Action": s.get("buy_action", "?"),
+                    "Entry Price": fmt_price(entry_p),
+                    "2x Target": fmt_price(target),
+                    "Peak ROI": f"{peak:+.1f}%",
+                    "Progress": f"{progress:.0%}",
+                    "Signal Time": s.get("signal_time", "")[:16],
+                    "Last Check": s.get("checked_at", "—")[:16],
+                })
+
+            pend_df = pd.DataFrame(pend_rows)
+
+            def color_pending(row):
+                peak_str = row["Peak ROI"]
+                try:
+                    val = float(peak_str.replace("%", "").replace("+", ""))
+                    if val > 50:
+                        return [f"color: {GREEN}"] * len(row)
+                    if val > 0:
+                        return [f"color: {BLUE}"] * len(row)
+                    return [f"color: {RED}"] * len(row)
+                except (ValueError, TypeError):
+                    return [""] * len(row)
+
+            st.dataframe(
+                pend_df.style.apply(color_pending, axis=1),
+                hide_index=True,
+                height=min(500, 50 + len(pend_rows) * 38),
+            )
+
+        st.divider()
+
+        # ── Breakdown by signal type ─────────────────────────────────────────
+        st.markdown("#### Hit Rate by Signal Type")
+        for sig_type in ("STRONG DIP", "BUY DIP", "WATCH"):
+            typed = [s for s in all_signals if s.get("signal") == sig_type]
+            typed_hits = [s for s in typed if s.get("hit_2x")]
+            rate = (len(typed_hits) / len(typed) * 100) if typed else 0
+            bar_clr = signal_color(sig_type)
+            st.markdown(
+                f"**{sig_type}**: {len(typed_hits)}/{len(typed)} "
+                f"(<b style='color:{bar_clr}'>{rate:.0f}%</b>)",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("#### Hit Rate by Duration")
+        for dur_type in ("SHORT", "LONG"):
+            typed = [s for s in all_signals
+                     if s.get("duration_class", "LONG") == dur_type]
+            typed_hits = [s for s in typed if s.get("hit_2x")]
+            rate = (len(typed_hits) / len(typed) * 100) if typed else 0
+            bar_clr = duration_color(dur_type)
+            st.markdown(
+                f"**{dur_type}**: {len(typed_hits)}/{len(typed)} "
+                f"(<b style='color:{bar_clr}'>{rate:.0f}%</b>)",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("#### Hit Rate by Buy Action")
+        for act in ("BUY NOW", "BUY ON DIP", "WAIT", "AVOID"):
+            typed = [s for s in all_signals if s.get("buy_action") == act]
+            typed_hits = [s for s in typed if s.get("hit_2x")]
+            rate = (len(typed_hits) / len(typed) * 100) if typed else 0
+            bar_clr = buy_action_color(act)
+            st.markdown(
+                f"**{act}**: {len(typed_hits)}/{len(typed)} "
+                f"(<b style='color:{bar_clr}'>{rate:.0f}%</b>)",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        if st.button("Clear Signal History", type="secondary"):
+            _save_json(SIGNALS_FILE, [])
+            st.success("Signal history cleared.")
+            st.rerun()
+
+    else:
+        st.info(
+            "No signals recorded yet. Run a scan in the Scanner tab — "
+            "all non-SKIP signals are automatically logged here."
+        )
+
 
 # ── Footer ───────────────────────────────────────────────────────────────────
 st.caption(
