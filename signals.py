@@ -21,13 +21,26 @@ def _get_pair(pair_address: str) -> dict | None:
 
 
 def _get_trending_pairs() -> list[dict]:
-    """Pull top-boosted Solana tokens from DexScreener and return their best pair."""
-    try:
-        r = requests.get(f"{_BASE}/token-boosts/top/v1", timeout=_TIMEOUT)
-        r.raise_for_status()
-        boosted = [t for t in r.json() if t.get("chainId") == "solana"]
-    except Exception as exc:
-        print(f"[signals] trending fetch error: {exc}")
+    """Pull top-boosted Solana tokens; falls back to token-profiles if boosts endpoint is unavailable."""
+    endpoints = [
+        f"{_BASE}/token-boosts/top/v1",
+        f"{_BASE}/token-profiles/latest/v1",
+    ]
+    boosted: list[dict] = []
+    for ep in endpoints:
+        try:
+            r = requests.get(ep, timeout=_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            # Both endpoints return a list; filter to Solana
+            items = data if isinstance(data, list) else data.get("data", [])
+            boosted = [t for t in items if t.get("chainId") == "solana"]
+            if boosted:
+                break
+        except Exception as exc:
+            print(f"[signals] {ep.split('/')[-1]} unavailable: {exc}")
+
+    if not boosted:
         return []
 
     pairs: list[dict] = []
