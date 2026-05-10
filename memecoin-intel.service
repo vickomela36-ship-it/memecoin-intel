@@ -1,0 +1,16 @@
+[Unit]
+Description=Memecoin Intel – Daily Signal Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/memecoin-intel
+EnvironmentFile=/home/user/memecoin-intel/.env
+ExecStart=/usr/bin/python3 /home/user/memecoin-intel/daemon.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
