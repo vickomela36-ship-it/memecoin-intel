@@ -1,0 +1,30 @@
+name: Daily Memecoin Signal Check
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 08:00 UTC every day
+  workflow_dispatch:        # manual trigger from GitHub UI
+
+jobs:
+  check-signals:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily signal check
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+        run: python daily_run.py
