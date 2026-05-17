@@ -1,64 +1,75 @@
 import os
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # API Keys
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "8292769f-aeb2-471c-af1d-fb98576972e4")
-SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
-
-# =============================================================================
-# Strategy Parameters — Swing Recovery After Dump
-# =============================================================================
-
-# Token filters
-MIN_TOKEN_AGE_HOURS = 24          # Only look at tokens older than 24h
-MIN_MARKET_CAP_USD = 2_000_000    # Minimum $2M market cap
-MIN_24H_VOLUME_USD = 500_000      # Minimum 24h volume to ensure liquidity
-
-# Dump detection
-DUMP_LOOKBACK_HOURS = 6           # How far back to detect a dump
-DUMP_THRESHOLD_PCT = -30          # Price must have dropped at least 30% from recent high
-VOLUME_SPIKE_MULTIPLIER = 2.0     # Volume during dump should be 2x normal
-
-# Recovery entry signals
-RECOVERY_BOUNCE_PCT = 5           # Price bounced at least 5% off the local bottom
-RSI_OVERSOLD_THRESHOLD = 35       # RSI below this = oversold, good for entry
-MIN_BUY_VOLUME_RATIO = 0.55      # Buy volume should exceed 55% of total during recovery
-
-# Take-profit / stop-loss
-TAKE_PROFIT_2X = 2.0              # First target: 2x entry
-TAKE_PROFIT_3X = 3.0              # Second target: 3x entry
-STOP_LOSS_PCT = -20               # Cut losses at -20%
-
-# Position sizing
-MAX_POSITION_SOL = 2.0            # Max SOL per trade
-MAX_OPEN_POSITIONS = 5            # Max concurrent positions
-
-# Scan interval
-SCAN_INTERVAL_SECONDS = 60        # How often to scan for new opportunities
-
-# =============================================================================
-# Jupiter API
-# =============================================================================
-JUPITER_API_KEY = os.getenv("JUPITER_API_KEY", "jup_2a68d98d00f9d7b8a69f213d81dd68606fd6d950b27cf9234ac16eb2030edded")
-JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
-JUPITER_TOKEN_LIST_API = "https://tokens.jup.ag/tokens?tags=verified"
-JUPITER_TOKEN_API = "https://api.jup.ag/tokens/v1"
-JUPITER_ULTRA_API = "https://api.jup.ag/ultra/v1"
-
-# =============================================================================
-# Helius API
-# =============================================================================
-HELIUS_API_BASE = "https://api.helius.xyz/v0"
-HELIUS_RPC_BASE = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-
-# =============================================================================
-# Birdeye API (fallback for OHLCV / market data)
-# =============================================================================
 BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY", "dac9521a4c004f65897b2bd3e52cf10d")
-BIRDEYE_API_BASE = "https://public-api.birdeye.so"
 
-# =============================================================================
-# Data storage
-# =============================================================================
-TRADES_LOG_FILE = "trades.json"
+# ═══════════════════════════════════════════════════════════════════════════════
+# API Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+DEXSCREENER_BOOSTS_TOP = "https://api.dexscreener.com/token-boosts/top/v1"
+DEXSCREENER_BOOSTS_LATEST = "https://api.dexscreener.com/token-boosts/latest/v1"
+DEXSCREENER_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
+DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
+DEXSCREENER_TOKEN = "https://api.dexscreener.com/latest/dex/tokens"
+
+HELIUS_RPC = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+BIRDEYE_API = "https://public-api.birdeye.so"
+RUGCHECK_API = "https://api.rugcheck.xyz/v1"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Token Filtering Thresholds
+# ═══════════════════════════════════════════════════════════════════════════════
+MIN_24H_VOLUME = 500_000
+MIN_5M_VOLUME = 1_000
+MIN_LIQUIDITY = 10_000
+MIN_TOKEN_AGE_HOURS = 2
+MIN_HOLDER_COUNT = 50
+MAX_TOP10_HOLDER_PCT = 50.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Technical Analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+RSI_PERIOD = 14
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
+OHLCV_1M_CANDLES = 60
+OHLCV_5M_CANDLES = 288
+FIB_LEVELS = [0.236, 0.382, 0.5, 0.618, 0.786]
+FIB_PROXIMITY_PCT = 3.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Confidence Scoring Weights (must sum to 1.0)
+# ═══════════════════════════════════════════════════════════════════════════════
+WEIGHT_FIB = 0.20
+WEIGHT_RSI = 0.15
+WEIGHT_VOLUME = 0.20
+WEIGHT_SENTIMENT = 0.15
+WEIGHT_HOLDERS = 0.10
+WEIGHT_VWAP = 0.10
+WEIGHT_PATTERN = 0.10
+
+GRADE_A_MIN = 80
+GRADE_B_MIN = 60
+GRADE_C_MIN = 40
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Risk Management
+# ═══════════════════════════════════════════════════════════════════════════════
+STOP_LOSS_PCT = 15
+TAKE_PROFIT_2X = 2.0
+TAKE_PROFIT_3X = 3.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data Files
+# ═══════════════════════════════════════════════════════════════════════════════
+SIGNALS_FILE = "signals_log.json"
+WATCHLIST_FILE = "watchlist.json"
+TRADES_FILE = "trades.json"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Search queries for DexScreener discovery
+# ═══════════════════════════════════════════════════════════════════════════════
+SEARCH_QUERIES = ["SOL", "PUMP", "MEME", "BONK", "WIF", "PEPE"]
