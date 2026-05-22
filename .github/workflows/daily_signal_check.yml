@@ -1,0 +1,35 @@
+name: Daily Memecoin Signal Check
+
+on:
+  schedule:
+    # Runs every day at 09:00 UTC
+    - cron: "0 9 * * *"
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  check-signals:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run daily signal check
+        env:
+          NOTION_TOKEN:        ${{ secrets.NOTION_TOKEN }}
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          # Optional overrides
+          BUY_MIN_PRICE_CHANGE_24H: ${{ vars.BUY_MIN_PRICE_CHANGE_24H || '15' }}
+          BUY_MIN_VOLUME_TO_MCAP:   ${{ vars.BUY_MIN_VOLUME_TO_MCAP   || '0.10' }}
+          BUY_MIN_MARKET_CAP:       ${{ vars.BUY_MIN_MARKET_CAP       || '1000000' }}
+        run: python daily_runner.py
