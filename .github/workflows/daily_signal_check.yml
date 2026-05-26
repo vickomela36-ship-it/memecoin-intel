@@ -1,0 +1,47 @@
+name: Daily Memecoin Signal Check
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 09:00 UTC every day
+  workflow_dispatch:        # allow manual runs from GitHub UI
+
+jobs:
+  signal-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily signal scanner
+        env:
+          WALLET_ADDRESS:        ${{ secrets.WALLET_ADDRESS }}
+          TRACKED_COINS:         ${{ secrets.TRACKED_COINS }}
+          COINGECKO_API_KEY:     ${{ secrets.COINGECKO_API_KEY }}
+          GMAIL_USER:            ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO:        vickomela36@gmail.com
+          NOTION_API_TOKEN:      ${{ secrets.NOTION_API_TOKEN }}
+          NOTION_DATABASE_ID:    ${{ secrets.NOTION_DATABASE_ID }}
+          RSI_BUY_THRESHOLD:     "35"
+          RSI_SELL_THRESHOLD:    "70"
+          VOLUME_SPIKE_MULTIPLIER: "2.0"
+          PRICE_DIP_THRESHOLD:   "-8.0"
+        run: python daily_runner.py
+
+      - name: Upload PnL log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnl-log-${{ github.run_id }}
+          path: pnl_log.csv
+          if-no-files-found: ignore
