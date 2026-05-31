@@ -1,0 +1,30 @@
+name: Daily Memecoin Signal Check
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 9:00 AM UTC every day
+  workflow_dispatch:        # manual trigger from GitHub Actions UI
+
+jobs:
+  check-signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run signal check
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+        run: python main.py
