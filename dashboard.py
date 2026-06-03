@@ -364,6 +364,7 @@ def run_full_scan():
     )
     progress = st.progress(0)
     safe_tokens = []
+    risky_tokens = []
 
     for i, c in enumerate(candidates):
         progress.progress((i + 1) / len(candidates))
@@ -375,36 +376,37 @@ def run_full_scan():
             safe_tokens.append(c)
         else:
             stats["safety_failed"] += 1
+            risky_tokens.append(c)
 
         time.sleep(0.3)
 
     progress.empty()
 
-    if not safe_tokens:
-        stage_text.info(
-            f"No tokens passed safety ({stats['safety_failed']} blocked). "
-            "This means mint/freeze authority or rug risk flagged every candidate."
-        )
-        return [], stats
-
     # ── Stage 3: Technical analysis ──────────────────────────────────────
-    stage_text.markdown(
-        f"**Stage 3/4:** Running TA on {len(safe_tokens)} tokens (Birdeye OHLCV)..."
-    )
-    progress = st.progress(0)
+    # Run TA on safe tokens + top risky tokens (for degen scoring)
+    risky_tokens.sort(key=lambda c: min(c["h6"], c["h24"]))
+    degen_candidates = risky_tokens[:20]
+    ta_pool = safe_tokens + degen_candidates
 
-    for i, c in enumerate(safe_tokens):
-        progress.progress((i + 1) / len(safe_tokens))
-        ta = run_ta(c["address"], c["price_usd"])
-        c["ta"] = ta
-        stats["ta_analyzed"] += 1
-        time.sleep(0.5)
+    if ta_pool:
+        stage_text.markdown(
+            f"**Stage 3/4:** Running TA on {len(ta_pool)} tokens (Birdeye OHLCV)..."
+        )
+        progress = st.progress(0)
 
-    progress.empty()
+        for i, c in enumerate(ta_pool):
+            progress.progress((i + 1) / len(ta_pool))
+            ta = run_ta(c["address"], c["price_usd"])
+            c["ta"] = ta
+            stats["ta_analyzed"] += 1
+            time.sleep(0.5)
+
+        progress.empty()
 
     # ── Stage 4: Confidence scoring ──────────────────────────────────────
     stage_text.markdown("**Stage 4/4:** Scoring and grading...")
     results = []
+    degen_results = []
 
     for c in safe_tokens:
         boosts = c.get("boosts", 0)
@@ -426,7 +428,7 @@ def run_full_scan():
             c["txns"], c["ta"], c["safety"],
         )
 
-        results.append({
+        entry = {
             "address": c["address"],
             "symbol": c["symbol"],
             "name": c["name"],
@@ -444,7 +446,6 @@ def run_full_scan():
             "txns": c["txns"],
             "boosts": boosts,
             "pair_data": c["pair_data"],
-            # Scoring
             "confidence": cs.total,
             "grade": cs.grade,
             "cs": cs,
@@ -452,9 +453,59 @@ def run_full_scan():
             "safety": c["safety"],
             "ta": c["ta"],
             "moonshot": moon,
-        })
+        }
+        results.append(entry)
+        if moon.total >= 40:
+            degen_results.append(entry)
+
+    # Score risky tokens for degen plays only (they failed safety for graded list)
+    for c in degen_candidates:
+        boosts = c.get("boosts", 0)
+        try:
+            boosts = int(boosts)
+        except (ValueError, TypeError):
+            boosts = 0
+
+        moon = compute_moonshot(
+            c["price_usd"], c["fdv"], c["h1"], c["h6"], c["h24"],
+            c["vol_5m"], c["vol_h1"], c["vol_24h"], c["liquidity"],
+            c["txns"], c["ta"], c["safety"],
+        )
+
+        if moon.total >= 40:
+            entry_exit = compute_entry_exit(
+                c["price_usd"], c["ta"],
+                ConfidenceScore(safety_passed=False),
+            )
+            degen_results.append({
+                "address": c["address"],
+                "symbol": c["symbol"],
+                "name": c["name"],
+                "price_usd": c["price_usd"],
+                "fdv": c["fdv"],
+                "h1": c["h1"],
+                "h6": c["h6"],
+                "h24": c["h24"],
+                "vol_5m": c["vol_5m"],
+                "vol_h1": c["vol_h1"],
+                "vol_h6": c["vol_h6"],
+                "vol_24h": c["vol_24h"],
+                "liquidity": c["liquidity"],
+                "pair_url": c["pair_url"],
+                "txns": c["txns"],
+                "boosts": boosts,
+                "pair_data": c["pair_data"],
+                "confidence": 0,
+                "grade": "F",
+                "cs": ConfidenceScore(safety_passed=False),
+                "entry_exit": entry_exit,
+                "safety": c["safety"],
+                "ta": c["ta"],
+                "moonshot": moon,
+            })
 
     results.sort(key=lambda r: -r["confidence"])
+    degen_results.sort(key=lambda r: -r["moonshot"].total)
 
     for r in results:
         g = r["grade"]
@@ -467,8 +518,10 @@ def run_full_scan():
         else:
             stats["grade_d"] += 1
 
+    stats["degen_plays"] = len(degen_results)
+
     stage_text.empty()
-    return results, stats
+    return results, degen_results, stats
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -873,32 +926,35 @@ with tab_scanner:
     )
 
     if scan_clicked:
-        results, stats = run_full_scan()
+        results, degen_results, stats = run_full_scan()
 
         _, sig_added = log_signals(results)
         if sig_added:
             st.toast(f"Logged {sig_added} new signal(s) to scoreboard")
 
         st.session_state["scan_results"] = results
+        st.session_state["degen_results"] = degen_results
         st.session_state["scan_stats"] = stats
         st.session_state["scan_time"] = datetime.now(timezone.utc).strftime(
             "%H:%M:%S UTC"
         )
 
     results = st.session_state.get("scan_results", [])
+    degen_results = st.session_state.get("degen_results", [])
     stats = st.session_state.get("scan_stats", {})
     scan_time = st.session_state.get("scan_time", "")
 
     if stats:
-        s1, s2, s3, s4, s5, s6 = st.columns(6)
+        s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
         s1.metric("Discovered", stats.get("discovered", 0))
         s2.metric("Pre-filtered", stats.get("pre_filtered", 0))
         s3.metric("Safety passed", stats.get("safety_passed", 0))
         s4.metric("Safety blocked", stats.get("safety_failed", 0))
         s5.metric("Grade A", stats.get("grade_a", 0))
         s6.metric("Grade B", stats.get("grade_b", 0))
+        s7.metric("Degen Plays", stats.get("degen_plays", 0))
 
-    if results:
+    if results or degen_results:
         grade_a = [r for r in results if r["grade"] == "A"]
         grade_b = [r for r in results if r["grade"] == "B"]
         grade_c = [r for r in results if r["grade"] == "C"]
@@ -943,20 +999,18 @@ with tab_scanner:
         st.divider()
 
         # ── DEGEN PLAYS — high risk / high reward ────────────────────────
-        degen = [r for r in results if r["moonshot"].total >= 40]
-        degen.sort(key=lambda r: -r["moonshot"].total)
-
-        if degen:
+        if degen_results:
             st.markdown(
-                f"## DEGEN PLAYS — High Risk / High Reward ({len(degen)})"
+                f"## DEGEN PLAYS — High Risk / High Reward ({len(degen_results)})"
             )
             st.caption(
-                "Risky tokens with moonshot potential. "
+                "Risky tokens with moonshot potential — includes tokens that "
+                "FAILED safety checks (rug risk, mint authority, etc). "
                 "Scored on dip depth, micro-cap size, volume spikes, and volatility. "
-                "Only bet what you can lose."
+                "Only bet what you can afford to lose."
             )
 
-            for r in degen:
+            for r in degen_results:
                 _render_degen_card(r)
         else:
             st.info("No degen plays found this scan — no deep-dip micro-caps detected.")
