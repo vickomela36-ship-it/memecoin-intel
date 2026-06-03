@@ -370,6 +370,9 @@ def compute_entry_exit(current_price, ta_result, confidence_score):
         "stop_loss_pct": STOP_LOSS_PCT,
         "target_2x": target_2x,
         "target_3x": target_3x,
+        "target_5x": current_price * 5,
+        "target_10x": current_price * 10,
+        "target_100x": current_price * 100,
         "nearest_support": nearest_support,
         "nearest_resistance": (
             min(ta_result.resistance_levels)
@@ -377,3 +380,187 @@ def compute_entry_exit(current_price, ta_result, confidence_score):
             else None
         ),
     }
+
+
+@dataclass
+class MoonshotScore:
+    total: float = 0.0
+    tier: str = ""
+    multiplier_target: str = ""
+
+    dip_depth_score: float = 0.0
+    mcap_score: float = 0.0
+    volume_spike_score: float = 0.0
+    volatility_score: float = 0.0
+    momentum_score: float = 0.0
+    buy_pressure_score: float = 0.0
+
+    risk_level: str = "EXTREME"
+    reasons: list = None
+    warnings: list = None
+
+    def __post_init__(self):
+        if self.reasons is None:
+            self.reasons = []
+        if self.warnings is None:
+            self.warnings = []
+
+
+def compute_moonshot(price_usd, fdv, h1, h6, h24, vol_5m, vol_h1, vol_24h,
+                     liquidity, txns, ta_result, safety_result):
+    """
+    Score tokens for high-risk/high-reward degen plays.
+    Inverts the normal logic: deeper dip + lower mcap + higher volatility = better.
+    """
+    ms = MoonshotScore()
+    reasons = []
+    warnings = []
+
+    if price_usd <= 0:
+        return ms
+
+    # ── Dip depth (30%) — deeper crash = bigger potential bounce ─────────
+    if h24 < -70:
+        ms.dip_depth_score = 100
+        reasons.append(f"Massive crash {h24:.0f}% in 24h — max rebound potential")
+    elif h24 < -50:
+        ms.dip_depth_score = 85
+        reasons.append(f"Deep crash {h24:.0f}% in 24h")
+    elif h24 < -35:
+        ms.dip_depth_score = 65
+        reasons.append(f"Strong dip {h24:.0f}% in 24h")
+    elif h6 < -30:
+        ms.dip_depth_score = 60
+        reasons.append(f"Fast dump {h6:.0f}% in 6h")
+    elif h6 < -15 or h24 < -20:
+        ms.dip_depth_score = 35
+    else:
+        ms.dip_depth_score = 10
+
+    # ── Market cap (25%) — micro/nano cap = biggest multiplier room ─────
+    if fdv < 100_000:
+        ms.mcap_score = 100
+        reasons.append(f"Nano-cap {fdv/1000:.0f}K — massive upside if it catches")
+    elif fdv < 500_000:
+        ms.mcap_score = 90
+        reasons.append(f"Micro-cap {fdv/1000:.0f}K — huge room to run")
+    elif fdv < 2_000_000:
+        ms.mcap_score = 70
+        reasons.append(f"Low-cap {fdv/1e6:.1f}M")
+    elif fdv < 10_000_000:
+        ms.mcap_score = 45
+    elif fdv < 50_000_000:
+        ms.mcap_score = 25
+    else:
+        ms.mcap_score = 5
+
+    # ── Volume spike (20%) — sudden volume = attention ──────────────────
+    if vol_h1 > 0 and vol_24h > 0:
+        hourly_rate = vol_h1 * 24
+        vol_ratio = hourly_rate / vol_24h if vol_24h > 0 else 0
+        if vol_ratio > 5:
+            ms.volume_spike_score = 100
+            reasons.append(f"Volume exploding {vol_ratio:.1f}x above average")
+        elif vol_ratio > 3:
+            ms.volume_spike_score = 80
+            reasons.append(f"Volume surging {vol_ratio:.1f}x")
+        elif vol_ratio > 1.5:
+            ms.volume_spike_score = 55
+        elif vol_ratio > 1:
+            ms.volume_spike_score = 35
+        else:
+            ms.volume_spike_score = 15
+    else:
+        ms.volume_spike_score = 20
+
+    # ── Volatility (10%) — high swings = bigger potential moves ─────────
+    swing = abs(h1) + abs(h6)
+    if swing > 50:
+        ms.volatility_score = 100
+        reasons.append(f"Extreme volatility ({swing:.0f}% combined swings)")
+    elif swing > 30:
+        ms.volatility_score = 75
+    elif swing > 15:
+        ms.volatility_score = 50
+    else:
+        ms.volatility_score = 20
+
+    # ── Momentum reversal (10%) — catching the turn ─────────────────────
+    if ta_result.available and ta_result.momentum_signal == "STRONG_REVERSAL":
+        ms.momentum_score = 100
+        reasons.append("Strong momentum reversal detected")
+    elif ta_result.available and ta_result.momentum_signal == "WEAK_REVERSAL":
+        ms.momentum_score = 60
+    elif h1 > 5 and (h6 < -20 or h24 < -30):
+        ms.momentum_score = 70
+        reasons.append(f"Bouncing {h1:+.1f}% off deep dip")
+    elif h1 > 0:
+        ms.momentum_score = 40
+    else:
+        ms.momentum_score = 15
+
+    # ── Buy pressure (5%) — are buyers stepping in? ─────────────────────
+    recent_ratio = 0
+    for tf_key in ("m5", "h1"):
+        tf = (txns or {}).get(tf_key, {})
+        buys = int(tf.get("buys", 0) or 0)
+        sells = int(tf.get("sells", 0) or 0)
+        total = buys + sells
+        if total > 0:
+            recent_ratio = max(recent_ratio, buys / total)
+    if recent_ratio > 0.70:
+        ms.buy_pressure_score = 100
+        reasons.append(f"Heavy buy pressure ({recent_ratio:.0%} buys)")
+    elif recent_ratio > 0.55:
+        ms.buy_pressure_score = 60
+    else:
+        ms.buy_pressure_score = 25
+
+    # ── Composite ────────────────────────────────────────────────────────
+    ms.total = round(
+        ms.dip_depth_score * 0.30
+        + ms.mcap_score * 0.25
+        + ms.volume_spike_score * 0.20
+        + ms.volatility_score * 0.10
+        + ms.momentum_score * 0.10
+        + ms.buy_pressure_score * 0.05,
+        1,
+    )
+
+    # ── Tier + target ────────────────────────────────────────────────────
+    if ms.total >= 80 and fdv < 500_000:
+        ms.tier = "100x MOONSHOT"
+        ms.multiplier_target = "100x"
+        ms.risk_level = "EXTREME"
+    elif ms.total >= 70 and fdv < 2_000_000:
+        ms.tier = "10x RUNNER"
+        ms.multiplier_target = "10x"
+        ms.risk_level = "VERY HIGH"
+    elif ms.total >= 55:
+        ms.tier = "5x POTENTIAL"
+        ms.multiplier_target = "5x"
+        ms.risk_level = "HIGH"
+    elif ms.total >= 40:
+        ms.tier = "3x POSSIBLE"
+        ms.multiplier_target = "3x"
+        ms.risk_level = "HIGH"
+    else:
+        ms.tier = "LOW POTENTIAL"
+        ms.multiplier_target = "2x"
+        ms.risk_level = "MODERATE"
+
+    # ── Warnings ─────────────────────────────────────────────────────────
+    if liquidity < 5_000:
+        warnings.append(f"Very low liquidity (${liquidity:,.0f}) — slippage risk")
+    if safety_result.has_mint_authority:
+        warnings.append("Mint authority active — supply can be inflated")
+    if safety_result.has_freeze_authority:
+        warnings.append("Freeze authority active — tokens can be frozen")
+    if fdv < 100_000:
+        warnings.append("Nano-cap — could go to zero instantly")
+    if vol_24h < 20_000:
+        warnings.append("Very low volume — may not be able to exit")
+
+    ms.reasons = reasons
+    ms.warnings = warnings
+    return ms

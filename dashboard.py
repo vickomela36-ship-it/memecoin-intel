@@ -28,7 +28,10 @@ from config import (
 )
 from token_filter import check_token_safety, SafetyResult
 from technical_analysis import run_ta, TAResult
-from confidence_scorer import compute_confidence, compute_entry_exit, ConfidenceScore
+from confidence_scorer import (
+    compute_confidence, compute_entry_exit, compute_moonshot,
+    ConfidenceScore, MoonshotScore,
+)
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN = "#00e676"
@@ -40,6 +43,19 @@ PURPLE = "#e040fb"
 GREY = "#9e9e9e"
 
 GRADE_COLORS = {"A": GREEN, "B": BLUE, "C": YELLOW, "D": ORANGE, "F": RED}
+MOON_COLORS = {
+    "100x MOONSHOT": PURPLE,
+    "10x RUNNER": GREEN,
+    "5x POTENTIAL": BLUE,
+    "3x POSSIBLE": YELLOW,
+    "LOW POTENTIAL": GREY,
+}
+RISK_COLORS = {
+    "EXTREME": RED,
+    "VERY HIGH": ORANGE,
+    "HIGH": YELLOW,
+    "MODERATE": BLUE,
+}
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 def _load_json(path):
@@ -404,6 +420,12 @@ def run_full_scan():
         )
         entry_exit = compute_entry_exit(c["price_usd"], c["ta"], cs)
 
+        moon = compute_moonshot(
+            c["price_usd"], c["fdv"], c["h1"], c["h6"], c["h24"],
+            c["vol_5m"], c["vol_h1"], c["vol_24h"], c["liquidity"],
+            c["txns"], c["ta"], c["safety"],
+        )
+
         results.append({
             "address": c["address"],
             "symbol": c["symbol"],
@@ -429,6 +451,7 @@ def run_full_scan():
             "entry_exit": entry_exit,
             "safety": c["safety"],
             "ta": c["ta"],
+            "moonshot": moon,
         })
 
     results.sort(key=lambda r: -r["confidence"])
@@ -696,6 +719,149 @@ def _render_token_card(r, compact=False):
     st.divider()
 
 
+def _render_degen_card(r):
+    """Render a moonshot/degen token card."""
+    moon = r["moonshot"]
+    ee = r["entry_exit"]
+    safety = r["safety"]
+    m_clr = MOON_COLORS.get(moon.tier, GREY)
+    r_clr = RISK_COLORS.get(moon.risk_level, RED)
+
+    c1, c2, c3, c4 = st.columns([3, 2, 2, 4])
+
+    with c1:
+        st.markdown(
+            f"<span class='grade-badge' style='background:{m_clr}20;"
+            f"color:{m_clr};border:2px solid {m_clr}'>"
+            f"{moon.multiplier_target}</span> "
+            f"**{r['symbol']}** · {r['name'][:25]}",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<span class='signal-tag' style='background:{r_clr}20;"
+            f"color:{r_clr};border:1px solid {r_clr}'>"
+            f"RISK: {moon.risk_level}</span>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"`{r['address'][:28]}...`")
+
+    with c2:
+        st.metric("Price", fmt_price(r["price_usd"]))
+        st.caption(f"MCap: {fmt_usd(r['fdv'])}")
+
+    with c3:
+        st.metric(f"Moon Score {moon.total:.0f}/100", moon.tier)
+        h1c = "positive" if r["h1"] >= 0 else "negative"
+        h24c = "positive" if r["h24"] >= 0 else "negative"
+        st.markdown(
+            f"1h: <b class='{h1c}'>{r['h1']:+.1f}%</b> · "
+            f"24h: <b class='{h24c}'>{r['h24']:+.1f}%</b>",
+            unsafe_allow_html=True,
+        )
+
+    with c4:
+        if moon.reasons:
+            st.markdown("**Why:** " + " · ".join(moon.reasons[:3]))
+        if moon.warnings:
+            st.markdown(
+                f"<span style='color:{RED}'>⚠ "
+                + " · ".join(moon.warnings[:2]) + "</span>",
+                unsafe_allow_html=True,
+            )
+
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            if st.button("Add to Watchlist", key=f"degen_{r['address']}",
+                         use_container_width=True):
+                wl = _load_json(WATCHLIST_FILE)
+                if not any(w["address"] == r["address"] for w in wl):
+                    wl.append({
+                        "address": r["address"],
+                        "symbol": r["symbol"],
+                        "name": r["name"],
+                        "entry_price": r["price_usd"],
+                        "target_2x": r["price_usd"] * 2,
+                        "grade": f"DEGEN-{moon.multiplier_target}",
+                        "confidence": moon.total,
+                        "pair_url": r["pair_url"],
+                        "added_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    _save_json(WATCHLIST_FILE, wl)
+                    st.success(f"Added {r['symbol']}")
+                else:
+                    st.info("Already in watchlist")
+        with btn_c2:
+            if r.get("pair_url"):
+                st.link_button("DexScreener", r["pair_url"],
+                               use_container_width=True)
+
+    with st.expander(f"Degen Analysis: {r['symbol']} — Targets · Score Breakdown"):
+        d1, d2, d3 = st.columns(3)
+
+        with d1:
+            st.markdown("##### Profit Targets")
+            if ee:
+                st.markdown(f"**Entry Zone:** {fmt_price(ee.get('entry_low', 0))} — "
+                            f"{fmt_price(ee.get('entry_high', 0))}")
+                st.markdown(
+                    f"**Stop-Loss:** {fmt_price(ee.get('stop_loss', 0))} "
+                    f"(-{ee.get('stop_loss_pct', 0)}%)"
+                )
+                st.markdown(f"**5x Target:** {fmt_price(ee.get('target_5x', 0))}")
+                st.markdown(f"**10x Target:** {fmt_price(ee.get('target_10x', 0))}")
+                st.markdown(f"**100x Target:** {fmt_price(ee.get('target_100x', 0))}")
+
+            st.markdown("---")
+            st.caption(
+                f"MCap now: {fmt_usd(r['fdv'])}\n\n"
+                f"5x MCap: {fmt_usd(r['fdv'] * 5)}\n\n"
+                f"10x MCap: {fmt_usd(r['fdv'] * 10)}\n\n"
+                f"100x MCap: {fmt_usd(r['fdv'] * 100)}"
+            )
+
+        with d2:
+            st.markdown("##### Moonshot Score Breakdown")
+            components = [
+                ("Dip depth", moon.dip_depth_score, 30),
+                ("Micro-cap", moon.mcap_score, 25),
+                ("Volume spike", moon.volume_spike_score, 20),
+                ("Volatility", moon.volatility_score, 10),
+                ("Momentum", moon.momentum_score, 10),
+                ("Buy pressure", moon.buy_pressure_score, 5),
+            ]
+            for label, score, weight in components:
+                bar_clr = GREEN if score >= 70 else (BLUE if score >= 50 else (
+                    YELLOW if score >= 30 else RED
+                ))
+                st.markdown(
+                    f"{label} ({weight}%): **{score:.0f}** "
+                    f"<span style='color:{bar_clr}'>{'█' * int(score / 10)}"
+                    f"{'░' * (10 - int(score / 10))}</span>",
+                    unsafe_allow_html=True,
+                )
+
+        with d3:
+            st.markdown("##### Risk Factors")
+            for w in moon.warnings:
+                st.markdown(f"<span style='color:{RED}'>⚠</span> {w}",
+                            unsafe_allow_html=True)
+            if safety.has_mint_authority:
+                st.markdown(f"<span style='color:{ORANGE}'>⚠</span> Mint authority active",
+                            unsafe_allow_html=True)
+            if safety.has_freeze_authority:
+                st.markdown(f"<span style='color:{ORANGE}'>⚠</span> Freeze authority active",
+                            unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("##### Market Stats")
+            st.caption(
+                f"Liq: {fmt_usd(r['liquidity'])} · Vol 24h: {fmt_usd(r['vol_24h'])}\n\n"
+                f"Vol 5m: {fmt_usd(r['vol_5m'])} · Vol 1h: {fmt_usd(r['vol_h1'])}"
+            )
+
+    st.divider()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — SCANNER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -773,6 +939,27 @@ with tab_scanner:
             with st.expander(f"C-Grade tokens ({len(grade_c)}) — lower confidence"):
                 for r in grade_c:
                     _render_token_card(r, compact=True)
+
+        st.divider()
+
+        # ── DEGEN PLAYS — high risk / high reward ────────────────────────
+        degen = [r for r in results if r["moonshot"].total >= 40]
+        degen.sort(key=lambda r: -r["moonshot"].total)
+
+        if degen:
+            st.markdown(
+                f"## DEGEN PLAYS — High Risk / High Reward ({len(degen)})"
+            )
+            st.caption(
+                "Risky tokens with moonshot potential. "
+                "Scored on dip depth, micro-cap size, volume spikes, and volatility. "
+                "Only bet what you can lose."
+            )
+
+            for r in degen:
+                _render_degen_card(r)
+        else:
+            st.info("No degen plays found this scan — no deep-dip micro-caps detected.")
 
     elif not scan_clicked:
         st.info(
