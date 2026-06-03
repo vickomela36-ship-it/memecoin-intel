@@ -307,11 +307,11 @@ def run_full_scan():
         vol_24h = _safe_float(best, "volume", "h24")
         liq = _safe_float(best, "liquidity", "usd")
 
-        has_dip = h6 < -10 or h24 < -15
-        has_recovery = h1 > 0
-        has_volume = vol_24h > 100_000
+        has_dip = h6 < -5 or h24 < -8
+        has_recovery = h1 > -2
+        has_volume = vol_24h > 30_000
 
-        if not (has_dip and has_recovery and has_volume):
+        if not (has_dip and has_volume):
             continue
 
         base = best.get("baseToken") or {}

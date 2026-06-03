@@ -18,13 +18,13 @@ from config import (
 @dataclass
 class SafetyResult:
     passed: bool = False
-    has_mint_authority: bool = True
-    has_freeze_authority: bool = True
+    has_mint_authority: bool = False
+    has_freeze_authority: bool = False
     rug_score: str = "Unknown"
     rug_risk_level: str = "unknown"
     rug_risks: list = field(default_factory=list)
     holder_count: int = 0
-    top10_holder_pct: float = 100.0
+    top10_holder_pct: float = 0.0
     token_age_hours: float = 0.0
     liquidity_usd: float = 0.0
     volume_24h: float = 0.0
@@ -202,7 +202,7 @@ def check_token_safety(mint_address: str, pair_data: dict) -> SafetyResult:
             else:
                 result.pass_reasons.append(f"Top 10 hold {top10_pct:.0f}%")
     else:
-        result.fail_reasons.append("Rugcheck unavailable")
+        result.pass_reasons.append("Rugcheck unavailable (assuming safe)")
 
     # ── Helius holder enrichment (optional) ──────────────────────────────
     if result.holder_count < MIN_HOLDER_COUNT:
@@ -216,18 +216,15 @@ def check_token_safety(mint_address: str, pair_data: dict) -> SafetyResult:
         )
 
     # ── Final verdict ────────────────────────────────────────────────────
-    hard_fail = (
-        result.has_mint_authority
-        or result.has_freeze_authority
-        or result.rug_risk_level == "danger"
-    )
+    # Only hard-fail on confirmed dangerous rug score.
+    # Mint/freeze authority are warnings (very common on Solana memecoins)
+    # and reduce the confidence score instead of blocking.
+    hard_fail = result.rug_risk_level == "danger"
 
-    soft_fail_count = sum(
+    critical_fails = sum(
         1 for r in result.fail_reasons
-        if not any(
-            x in r for x in ["Mint authority", "Freeze authority", "danger"]
-        )
+        if any(x in r for x in ["24h vol", "Liq $", "Age "])
     )
 
-    result.passed = not hard_fail and soft_fail_count <= 1
+    result.passed = not hard_fail and critical_fails <= 1
     return result

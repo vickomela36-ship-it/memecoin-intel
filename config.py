@@ -22,12 +22,12 @@ RUGCHECK_API = "https://api.rugcheck.xyz/v1"
 # ═══════════════════════════════════════════════════════════════════════════════
 # Token Filtering Thresholds
 # ═══════════════════════════════════════════════════════════════════════════════
-MIN_24H_VOLUME = 500_000
-MIN_5M_VOLUME = 1_000
-MIN_LIQUIDITY = 10_000
-MIN_TOKEN_AGE_HOURS = 2
-MIN_HOLDER_COUNT = 50
-MAX_TOP10_HOLDER_PCT = 50.0
+MIN_24H_VOLUME = 50_000
+MIN_5M_VOLUME = 500
+MIN_LIQUIDITY = 5_000
+MIN_TOKEN_AGE_HOURS = 1
+MIN_HOLDER_COUNT = 20
+MAX_TOP10_HOLDER_PCT = 70.0
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Technical Analysis
@@ -72,4 +72,7 @@ TRADES_FILE = "trades.json"
 # ═══════════════════════════════════════════════════════════════════════════════
 # Search queries for DexScreener discovery
 # ═══════════════════════════════════════════════════════════════════════════════
-SEARCH_QUERIES = ["SOL", "PUMP", "MEME", "BONK", "WIF", "PEPE"]
+SEARCH_QUERIES = [
+    "SOL", "PUMP", "MEME", "BONK", "WIF", "PEPE",
+    "DOGE", "CAT", "AI", "TRUMP", "MOON", "SOLANA",
+]
