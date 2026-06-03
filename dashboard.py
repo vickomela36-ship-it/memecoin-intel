@@ -18,6 +18,7 @@ import requests
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import (
     DEXSCREENER_BOOSTS_TOP, DEXSCREENER_BOOSTS_LATEST,
@@ -96,38 +97,76 @@ def _fetch_search(query):
 
 
 def fetch_trending_tokens():
-    """Combine DexScreener endpoints for a broad token pool."""
+    """Combine DexScreener endpoints for a broad token pool (parallel)."""
     pool = []
     seen = set()
 
-    for url in (DEXSCREENER_BOOSTS_TOP, DEXSCREENER_BOOSTS_LATEST,
-                DEXSCREENER_PROFILES):
-        for tok in _fetch_endpoint(url):
-            addr = tok.get("tokenAddress")
-            chain = tok.get("chainId")
-            if addr and addr not in seen and (not chain or chain == "solana"):
-                seen.add(addr)
-                pool.append({
-                    "tokenAddress": addr,
-                    "chainId": chain or "solana",
-                    "boosts": tok.get("totalAmount") or tok.get("amount") or 0,
-                })
+    endpoint_urls = [DEXSCREENER_BOOSTS_TOP, DEXSCREENER_BOOSTS_LATEST,
+                     DEXSCREENER_PROFILES]
 
-    for q in SEARCH_QUERIES:
-        for pair in _fetch_search(q):
-            if pair.get("chainId") != "solana":
-                continue
-            base = pair.get("baseToken") or {}
-            addr = base.get("address")
-            if addr and addr not in seen:
-                seen.add(addr)
-                pool.append({
-                    "tokenAddress": addr,
-                    "chainId": "solana",
-                    "boosts": 0,
-                })
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        ep_futures = {ex.submit(_fetch_endpoint, url): url for url in endpoint_urls}
+        sq_futures = {ex.submit(_fetch_search, q): q for q in SEARCH_QUERIES}
+
+        for fut in as_completed(ep_futures):
+            for tok in fut.result():
+                addr = tok.get("tokenAddress")
+                chain = tok.get("chainId")
+                if addr and addr not in seen and (not chain or chain == "solana"):
+                    seen.add(addr)
+                    pool.append({
+                        "tokenAddress": addr,
+                        "chainId": chain or "solana",
+                        "boosts": tok.get("totalAmount") or tok.get("amount") or 0,
+                    })
+
+        for fut in as_completed(sq_futures):
+            for pair in fut.result():
+                if pair.get("chainId") != "solana":
+                    continue
+                base = pair.get("baseToken") or {}
+                addr = base.get("address")
+                if addr and addr not in seen:
+                    seen.add(addr)
+                    pool.append({
+                        "tokenAddress": addr,
+                        "chainId": "solana",
+                        "boosts": 0,
+                    })
 
     return pool
+
+
+@st.cache_data(ttl=60)
+def _fetch_pair_batch(addresses_key):
+    """Fetch pair data for up to 30 comma-separated addresses."""
+    try:
+        r = requests.get(f"{DEXSCREENER_TOKEN}/{addresses_key}", timeout=15)
+        r.raise_for_status()
+        return r.json().get("pairs") or []
+    except Exception:
+        return []
+
+
+def fetch_pair_data_batch(address_list):
+    """Batch-fetch pair data from DexScreener (up to 30 per request, parallel)."""
+    batches = []
+    for i in range(0, len(address_list), 30):
+        batch = address_list[i:i + 30]
+        batches.append(",".join(batch))
+
+    all_pairs = {}
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(_fetch_pair_batch, key): key for key in batches}
+        for fut in as_completed(futures):
+            for pair in fut.result():
+                base = pair.get("baseToken") or {}
+                addr = base.get("address")
+                if addr:
+                    if addr not in all_pairs:
+                        all_pairs[addr] = []
+                    all_pairs[addr].append(pair)
+    return all_pairs
 
 
 @st.cache_data(ttl=60)
@@ -300,19 +339,18 @@ def run_full_scan():
 
     if not tokens:
         stage_text.error("No tokens found from DexScreener.")
-        return [], stats
+        return [], [], stats
 
-    # ── Pre-filter: get pair data, keep Solana with dip pattern ──────────
+    # ── Pre-filter: batch-fetch pair data, keep Solana with dip pattern ──
     stage_text.markdown(
         f"**Stage 1/4:** Pre-filtering {len(tokens)} tokens..."
     )
-    progress = st.progress(0)
-    candidates = []
+    addr_list = [tok["tokenAddress"] for tok in tokens]
+    boosts_map = {tok["tokenAddress"]: tok.get("boosts", 0) for tok in tokens}
+    all_pairs = fetch_pair_data_batch(addr_list)
 
-    for i, tok in enumerate(tokens):
-        progress.progress((i + 1) / len(tokens))
-        addr = tok["tokenAddress"]
-        pairs = fetch_pair_data(addr)
+    candidates = []
+    for addr, pairs in all_pairs.items():
         best = _best_solana_pair(pairs)
         if not best:
             continue
@@ -324,7 +362,6 @@ def run_full_scan():
         liq = _safe_float(best, "liquidity", "usd")
 
         has_dip = h6 < -5 or h24 < -8
-        has_recovery = h1 > -2
         has_volume = vol_24h > 30_000
 
         if not (has_dip and has_volume):
@@ -336,7 +373,7 @@ def run_full_scan():
             "symbol": base.get("symbol", "?"),
             "name": base.get("name", "?"),
             "pair_data": best,
-            "boosts": tok.get("boosts", 0),
+            "boosts": boosts_map.get(addr, 0),
             "h1": h1, "h6": h6, "h24": h24,
             "price_usd": _safe_float(best, "priceUsd"),
             "fdv": _safe_float(best, "fdv"),
@@ -348,16 +385,14 @@ def run_full_scan():
             "txns": best.get("txns") or {},
             "pair_url": best.get("url", ""),
         })
-        time.sleep(0.1)
 
-    progress.empty()
     stats["pre_filtered"] = len(candidates)
 
     if not candidates:
         stage_text.info("No tokens passed pre-filtering (need dip + recovery + volume).")
-        return [], stats
+        return [], [], stats
 
-    # ── Stage 2: Safety gate ─────────────────────────────────────────────
+    # ── Stage 2: Safety gate (parallel) ─────────────────────────────────
     stage_text.markdown(
         f"**Stage 2/4:** Running safety checks on {len(candidates)} tokens "
         "(rugcheck + Helius)..."
@@ -366,24 +401,27 @@ def run_full_scan():
     safe_tokens = []
     risky_tokens = []
 
-    for i, c in enumerate(candidates):
-        progress.progress((i + 1) / len(candidates))
-        safety = check_token_safety(c["address"], c["pair_data"])
-        c["safety"] = safety
+    def _run_safety(c):
+        return c, check_token_safety(c["address"], c["pair_data"])
 
-        if safety.passed:
-            stats["safety_passed"] += 1
-            safe_tokens.append(c)
-        else:
-            stats["safety_failed"] += 1
-            risky_tokens.append(c)
-
-        time.sleep(0.3)
+    done = 0
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = [ex.submit(_run_safety, c) for c in candidates]
+        for fut in as_completed(futures):
+            c, safety = fut.result()
+            c["safety"] = safety
+            if safety.passed:
+                stats["safety_passed"] += 1
+                safe_tokens.append(c)
+            else:
+                stats["safety_failed"] += 1
+                risky_tokens.append(c)
+            done += 1
+            progress.progress(done / len(candidates))
 
     progress.empty()
 
-    # ── Stage 3: Technical analysis ──────────────────────────────────────
-    # Run TA on safe tokens + top risky tokens (for degen scoring)
+    # ── Stage 3: Technical analysis (parallel) ──────────────────────────
     risky_tokens.sort(key=lambda c: min(c["h6"], c["h24"]))
     degen_candidates = risky_tokens[:20]
     ta_pool = safe_tokens + degen_candidates
@@ -394,12 +432,18 @@ def run_full_scan():
         )
         progress = st.progress(0)
 
-        for i, c in enumerate(ta_pool):
-            progress.progress((i + 1) / len(ta_pool))
-            ta = run_ta(c["address"], c["price_usd"])
-            c["ta"] = ta
-            stats["ta_analyzed"] += 1
-            time.sleep(0.5)
+        def _run_ta(c):
+            return c, run_ta(c["address"], c["price_usd"])
+
+        done = 0
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = [ex.submit(_run_ta, c) for c in ta_pool]
+            for fut in as_completed(futures):
+                c, ta = fut.result()
+                c["ta"] = ta
+                stats["ta_analyzed"] += 1
+                done += 1
+                progress.progress(done / len(ta_pool))
 
         progress.empty()
 
