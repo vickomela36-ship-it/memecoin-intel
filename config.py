@@ -66,6 +66,7 @@ TAKE_PROFIT_3X = 3.0
 # Data Files
 # ═══════════════════════════════════════════════════════════════════════════════
 SIGNALS_FILE = "signals_log.json"
+DEGEN_SIGNALS_FILE = "degen_signals_log.json"
 WATCHLIST_FILE = "watchlist.json"
 TRADES_FILE = "trades.json"
 

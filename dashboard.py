@@ -24,7 +24,7 @@ from config import (
     DEXSCREENER_BOOSTS_TOP, DEXSCREENER_BOOSTS_LATEST,
     DEXSCREENER_PROFILES, DEXSCREENER_SEARCH, DEXSCREENER_TOKEN,
     SEARCH_QUERIES,
-    WATCHLIST_FILE, TRADES_FILE, SIGNALS_FILE,
+    WATCHLIST_FILE, TRADES_FILE, SIGNALS_FILE, DEGEN_SIGNALS_FILE,
     GRADE_A_MIN, GRADE_B_MIN,
 )
 from token_filter import check_token_safety, SafetyResult
@@ -306,6 +306,108 @@ def check_2x_hits():
 
     if updated:
         _save_json(SIGNALS_FILE, signals)
+    return signals, new_hits, checked
+
+
+# ── Degen signal logging + 5x/10x tracker ─────────────────────────────────
+def log_degen_signals(degen_results):
+    signals = _load_json(DEGEN_SIGNALS_FILE)
+    existing_keys = {(s.get("address", ""), s.get("signal_time", "")[:10])
+                     for s in signals}
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+
+    for r in degen_results:
+        moon = r.get("moonshot")
+        if not moon or moon.total < 40:
+            continue
+        key = (r["address"], now[:10])
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        signals.append({
+            "address": r["address"],
+            "symbol": r["symbol"],
+            "tier": moon.tier,
+            "multiplier_target": moon.multiplier_target,
+            "moon_score": moon.total,
+            "risk_level": moon.risk_level,
+            "signal_price": r["price_usd"],
+            "fdv_at_signal": r["fdv"],
+            "signal_time": now,
+            "target_5x": r["price_usd"] * 5,
+            "target_10x": r["price_usd"] * 10,
+            "target_100x": r["price_usd"] * 100,
+            "hit_5x": False,
+            "hit_5x_time": None,
+            "hit_10x": False,
+            "hit_10x_time": None,
+            "hit_100x": False,
+            "hit_100x_time": None,
+            "peak_price": r["price_usd"],
+            "peak_roi_pct": 0.0,
+            "peak_multiplier": 1.0,
+            "checked_at": now,
+        })
+        added += 1
+
+    if added:
+        _save_json(DEGEN_SIGNALS_FILE, signals)
+    return signals, added
+
+
+def check_degen_hits():
+    signals = _load_json(DEGEN_SIGNALS_FILE)
+    if not signals:
+        return signals, 0, 0
+
+    updated = False
+    new_hits = 0
+    checked = 0
+
+    for s in signals:
+        if s.get("hit_100x"):
+            continue
+
+        pairs = fetch_pair_data(s["address"])
+        best = _best_solana_pair(pairs)
+        if not best:
+            continue
+        checked += 1
+
+        current = _safe_float(best, "priceUsd")
+        entry = s.get("signal_price", 0)
+        if entry <= 0:
+            continue
+
+        if current > s.get("peak_price", 0):
+            s["peak_price"] = current
+            s["peak_roi_pct"] = round((current - entry) / entry * 100, 2)
+            s["peak_multiplier"] = round(current / entry, 2)
+            updated = True
+
+        s["checked_at"] = datetime.now(timezone.utc).isoformat()
+
+        if not s.get("hit_5x") and current >= s.get("target_5x", 0):
+            s["hit_5x"] = True
+            s["hit_5x_time"] = datetime.now(timezone.utc).isoformat()
+            new_hits += 1
+            updated = True
+
+        if not s.get("hit_10x") and current >= s.get("target_10x", 0):
+            s["hit_10x"] = True
+            s["hit_10x_time"] = datetime.now(timezone.utc).isoformat()
+            new_hits += 1
+            updated = True
+
+        if not s.get("hit_100x") and current >= s.get("target_100x", 0):
+            s["hit_100x"] = True
+            s["hit_100x_time"] = datetime.now(timezone.utc).isoformat()
+            new_hits += 1
+            updated = True
+
+    if updated:
+        _save_json(DEGEN_SIGNALS_FILE, signals)
     return signals, new_hits, checked
 
 
@@ -973,8 +1075,14 @@ with tab_scanner:
         results, degen_results, stats = run_full_scan()
 
         _, sig_added = log_signals(results)
-        if sig_added:
-            st.toast(f"Logged {sig_added} new signal(s) to scoreboard")
+        _, degen_added = log_degen_signals(degen_results)
+        if sig_added or degen_added:
+            parts = []
+            if sig_added:
+                parts.append(f"{sig_added} signal(s)")
+            if degen_added:
+                parts.append(f"{degen_added} degen play(s)")
+            st.toast(f"Logged {' + '.join(parts)} to scoreboard")
 
         st.session_state["scan_results"] = results
         st.session_state["degen_results"] = degen_results
@@ -1441,6 +1549,148 @@ with tab_scoreboard:
         st.info(
             "No signals recorded yet. Run a scan — all A/B/C-grade signals "
             "are automatically logged here."
+        )
+
+    # ── DEGEN PLAYS SCOREBOARD ───────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Degen Plays Scoreboard — 5x / 10x / 100x Tracker")
+    st.caption(
+        "Every degen play (moonshot score 40+) is logged. "
+        "Live price checks track 5x, 10x, and 100x hits."
+    )
+
+    degen_signals = _load_json(DEGEN_SIGNALS_FILE)
+
+    db_c1, db_c2 = st.columns([1, 3])
+    with db_c1:
+        degen_check = st.button(
+            "Check Degen Hits Now", type="primary", use_container_width=True,
+        )
+    with db_c2:
+        st.caption("Fetches live prices for all degen signals and marks milestone hits.")
+
+    if degen_check and degen_signals:
+        with st.spinner("Checking degen prices..."):
+            degen_signals, d_new_hits, d_checked = check_degen_hits()
+        if d_new_hits:
+            st.success(f"New milestone hits: {d_new_hits} (checked {d_checked} plays)")
+        else:
+            st.info(f"No new hits (checked {d_checked} degen plays)")
+
+    if degen_signals:
+        d_5x = [s for s in degen_signals if s.get("hit_5x")]
+        d_10x = [s for s in degen_signals if s.get("hit_10x")]
+        d_100x = [s for s in degen_signals if s.get("hit_100x")]
+        d_pending = [s for s in degen_signals if not s.get("hit_5x")]
+
+        dm1, dm2, dm3, dm4, dm5 = st.columns(5)
+        dm1.metric("Total Degen Plays", len(degen_signals))
+        dm2.metric("5x Hits", len(d_5x))
+        dm3.metric("10x Hits", len(d_10x))
+        dm4.metric("100x Hits", len(d_100x))
+        best_mult = max(
+            (s.get("peak_multiplier", 1) for s in degen_signals), default=1
+        )
+        dm5.metric("Best Multiplier", f"{best_mult:.1f}x")
+
+        st.divider()
+
+        if d_5x or d_10x or d_100x:
+            st.markdown(
+                f"#### Milestone Hits "
+                f"({len(d_100x)} at 100x · {len(d_10x)} at 10x · {len(d_5x)} at 5x)"
+            )
+            hit_rows = []
+            for s in sorted(d_5x, key=lambda x: x.get("peak_multiplier", 0),
+                            reverse=True):
+                milestones = []
+                if s.get("hit_100x"):
+                    milestones.append("100x")
+                if s.get("hit_10x"):
+                    milestones.append("10x")
+                if s.get("hit_5x"):
+                    milestones.append("5x")
+                hit_rows.append({
+                    "Symbol": s.get("symbol", "?"),
+                    "Tier": s.get("tier", "?"),
+                    "Moon Score": s.get("moon_score", 0),
+                    "Entry": fmt_price(s.get("signal_price", 0)),
+                    "Peak": fmt_price(s.get("peak_price", 0)),
+                    "Peak Multi": f"{s.get('peak_multiplier', 1):.1f}x",
+                    "Milestones": " · ".join(milestones),
+                    "Signal Time": s.get("signal_time", "")[:16],
+                })
+            st.dataframe(
+                pd.DataFrame(hit_rows).style.apply(
+                    lambda row: [f"color: {PURPLE}"] * len(row), axis=1
+                ),
+                hide_index=True,
+                height=min(400, 50 + len(hit_rows) * 38),
+            )
+
+        if d_pending:
+            st.markdown(f"#### Pending Degen Plays ({len(d_pending)})")
+            dpend_rows = []
+            for s in sorted(d_pending, key=lambda x: x.get("moon_score", 0),
+                            reverse=True):
+                entry_p = s.get("signal_price", 0)
+                mult = s.get("peak_multiplier", 1)
+                dpend_rows.append({
+                    "Symbol": s.get("symbol", "?"),
+                    "Tier": s.get("tier", "?"),
+                    "Moon Score": s.get("moon_score", 0),
+                    "Risk": s.get("risk_level", "?"),
+                    "Entry": fmt_price(entry_p),
+                    "Peak": fmt_price(s.get("peak_price", 0)),
+                    "Peak Multi": f"{mult:.1f}x",
+                    "Peak ROI": f"{s.get('peak_roi_pct', 0):+.0f}%",
+                    "Signal Time": s.get("signal_time", "")[:16],
+                })
+
+            def color_degen_pending(row):
+                try:
+                    m = float(row["Peak Multi"].replace("x", ""))
+                    clr = PURPLE if m >= 5 else (GREEN if m >= 2 else (
+                        BLUE if m >= 1 else RED
+                    ))
+                    return [f"color: {clr}"] * len(row)
+                except (ValueError, TypeError):
+                    return [""] * len(row)
+
+            st.dataframe(
+                pd.DataFrame(dpend_rows).style.apply(color_degen_pending, axis=1),
+                hide_index=True,
+                height=min(500, 50 + len(dpend_rows) * 38),
+            )
+
+        st.divider()
+
+        st.markdown("#### Hit Rate by Tier")
+        for tier in ("100x MOONSHOT", "10x RUNNER", "5x POTENTIAL", "3x POSSIBLE"):
+            typed = [s for s in degen_signals if s.get("tier") == tier]
+            if not typed:
+                continue
+            typed_5x = [s for s in typed if s.get("hit_5x")]
+            rate = (len(typed_5x) / len(typed) * 100) if typed else 0
+            t_clr = MOON_COLORS.get(tier, GREY)
+            avg_mult = sum(s.get("peak_multiplier", 1) for s in typed) / len(typed)
+            st.markdown(
+                f"**{tier}**: {len(typed_5x)}/{len(typed)} hit 5x+ "
+                f"(<b style='color:{t_clr}'>{rate:.0f}%</b>) · "
+                f"avg peak {avg_mult:.1f}x",
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+        if st.button("Clear Degen History", type="secondary"):
+            _save_json(DEGEN_SIGNALS_FILE, [])
+            st.success("Degen signal history cleared.")
+            st.rerun()
+
+    else:
+        st.info(
+            "No degen plays recorded yet. Run a scan — all tokens with "
+            "moonshot score 40+ are automatically logged here."
         )
 
 

@@ -4,3 +4,4 @@ __pycache__/
 trades.json
 watchlist.json
 signals_log.json
+degen_signals_log.json
