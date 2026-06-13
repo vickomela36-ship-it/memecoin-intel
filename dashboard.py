@@ -39,8 +39,7 @@ from crypto_predictions import (
     CryptoPrediction, SignalDetail, PredictionMarketEdge,
 )
 from football_predictions import (
-    get_match_predictions, get_available_competitions,
-    MatchPrediction,
+    get_match_predictions, get_available_competitions, MatchPrediction,
 )
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -992,64 +991,51 @@ def _render_crypto_card(pred):
 
 
 def _render_match_card(m):
+    conf_color = {
+        "Very High": GREEN, "High": BLUE, "Medium": YELLOW, "Low": GREY,
+    }.get(m.pick_confidence, GREY)
+
+    # Pick banner
+    st.markdown(
+        f"<div style='padding:12px 16px;border-radius:8px;border:1px solid {conf_color};"
+        f"background:{conf_color}15;margin-bottom:8px'>"
+        f"<span style='font-size:20px;font-weight:900;color:{conf_color}'>"
+        f"PICK: {m.pick}</span>"
+        f"<span style='float:right;font-size:14px;color:{conf_color}'>"
+        f"{m.pick_confidence} Confidence</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     c1, c2, c3 = st.columns([3, 4, 3])
 
     with c1:
-        st.markdown(f"### {m.home_team}")
+        st.markdown(f"**{m.home_team}**")
         st.caption(f"ELO: {m.home_elo:.0f}")
-        st.metric("Win %", f"{m.home_win_prob:.0%}")
-        if m.best_home_odds > 0:
-            st.caption(f"Best odds: {m.best_home_odds:.2f} ({m.best_home_bookmaker})")
+        st.metric("Win Prob", f"{m.home_win_prob:.0%}")
 
     with c2:
-        st.markdown(f"### vs")
-        st.caption(f"{m.utc_date[:16]}Z · {m.competition}")
-        st.metric("Draw %", f"{m.draw_prob:.0%}")
-        if m.best_draw_odds > 0:
-            st.caption(f"Best odds: {m.best_draw_odds:.2f} ({m.best_draw_bookmaker})")
-
+        date_str = m.utc_date[:16] + "Z" if m.utc_date else "TBD"
+        st.caption(f"{date_str} · {m.competition}")
+        st.metric("Draw Prob", f"{m.draw_prob:.0%}")
         if m.home_score is not None and m.away_score is not None:
-            st.markdown(f"**Score: {m.home_score} - {m.away_score}**")
+            st.markdown(f"**Final: {m.home_score} - {m.away_score}**")
+        elo_label = f"+{m.elo_gap:.0f}" if m.elo_gap > 0 else f"{m.elo_gap:.0f}"
+        st.caption(f"ELO gap: {elo_label} (home advantage)")
 
     with c3:
-        st.markdown(f"### {m.away_team}")
+        st.markdown(f"**{m.away_team}**")
         st.caption(f"ELO: {m.away_elo:.0f}")
-        st.metric("Win %", f"{m.away_win_prob:.0%}")
-        if m.best_away_odds > 0:
-            st.caption(f"Best odds: {m.best_away_odds:.2f} ({m.best_away_bookmaker})")
+        st.metric("Win Prob", f"{m.away_win_prob:.0%}")
 
-    # Value bets
-    if m.value_bets:
-        for vb in m.value_bets:
-            edge = vb.get("edge", 0) * 100
-            conf = vb.get("confidence", "Low")
-            vb_clr = GREEN if conf == "High" else (BLUE if conf == "Medium" else YELLOW)
-            outcome_label = {
-                "home": m.home_team, "draw": "Draw", "away": m.away_team
-            }.get(vb.get("outcome", ""), vb.get("outcome", ""))
-            st.markdown(
-                f"<div style='padding:8px;border-radius:6px;border:1px solid {vb_clr};"
-                f"background:{vb_clr}15'>"
-                f"<b>VALUE BET:</b> {outcome_label} @ {vb.get('decimal_odds', 0):.2f} "
-                f"({vb.get('bookmaker', '?')}) — "
-                f"Edge: {edge:+.1f}% · Kelly: {vb.get('kelly_fraction', 0):.1%} · "
-                f"Confidence: {conf}"
-                f"</div>",
-                unsafe_allow_html=True)
-
-    # Odds comparison table
-    if m.all_bookmaker_odds:
-        with st.expander("Odds Comparison"):
-            rows = []
-            for bk in m.all_bookmaker_odds:
-                rows.append({
-                    "Bookmaker": bk.get("bookmaker", "?"),
-                    "Home": f"{bk.get('home', 0):.2f}",
-                    "Draw": f"{bk.get('draw', 0):.2f}",
-                    "Away": f"{bk.get('away', 0):.2f}",
-                })
-            if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True)
+    # Upside box
+    st.markdown(
+        f"<div style='padding:8px 12px;border-radius:6px;background:#1a1a2e;"
+        f"border-left:3px solid {conf_color};margin:4px 0'>"
+        f"<b>Upside:</b> {m.upside}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     st.divider()
 
@@ -1072,7 +1058,7 @@ st.markdown(
 # ── Sidebar navigation ──────────────────────────────────────────────────────
 page = st.sidebar.radio(
     "Navigate",
-    ["Memecoin Scanner", "Crypto Predictions", "Football Value Plays"],
+    ["Memecoin Scanner", "Crypto Predictions", "Football Picks"],
     index=0,
 )
 st.sidebar.markdown("---")
@@ -1494,11 +1480,11 @@ elif page == "Crypto Predictions":
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE 3: FOOTBALL VALUE PLAYS
 # ═══════════════════════════════════════════════════════════════════════════════
-elif page == "Football Value Plays":
-    st.markdown("# World Cup & Football — Value Plays")
+elif page == "Football Picks":
+    st.markdown("# Football Picks")
     st.caption(
-        "ELO-based match predictions compared against bookmaker odds. "
-        "Finds value bets where model probability diverges from market pricing."
+        "ELO-powered match predictions. Shows the pick, win probability, "
+        "confidence level, and upside for each match."
     )
 
     comp_col, btn_col = st.columns([2, 1])
@@ -1514,11 +1500,11 @@ elif page == "Football Value Plays":
             }.get(x, x),
         )
     with btn_col:
-        refresh_football = st.button("Refresh Matches", type="primary",
+        refresh_football = st.button("Refresh Picks", type="primary",
                                      use_container_width=True)
 
     if refresh_football:
-        with st.spinner("Fetching fixtures and odds..."):
+        with st.spinner("Fetching fixtures and computing picks..."):
             matches = get_match_predictions(competition)
             st.session_state["football_matches"] = matches
             st.session_state["football_comp"] = competition
@@ -1527,28 +1513,29 @@ elif page == "Football Value Plays":
     matches = st.session_state.get("football_matches", [])
 
     if matches:
-        value_matches = [m for m in matches if m.value_bets]
         scheduled = [m for m in matches if m.status in ("SCHEDULED", "TIMED")]
         finished = [m for m in matches if m.status == "FINISHED"]
+        high_conf = [m for m in scheduled if m.pick_confidence in ("Very High", "High")]
 
         fm1, fm2, fm3 = st.columns(3)
         fm1.metric("Total Matches", len(matches))
-        fm2.metric("Value Bets Found", sum(len(m.value_bets) for m in matches))
+        fm2.metric("High Confidence Picks", len(high_conf))
         fm3.metric("Upcoming", len(scheduled))
 
         st.divider()
 
-        # Value bets section
-        if value_matches:
-            st.markdown(f"## Value Bets ({len(value_matches)} matches)")
-            st.caption("Matches where model probability significantly exceeds market odds.")
-            for m in value_matches:
+        # Top picks section
+        if high_conf:
+            st.markdown(f"## Top Picks ({len(high_conf)})")
+            st.caption("Matches with High or Very High confidence — your strongest plays.")
+            for m in high_conf:
                 _render_match_card(m)
 
-        # Upcoming matches
-        if scheduled:
-            st.markdown(f"## Upcoming Matches ({len(scheduled)})")
-            for m in scheduled[:20]:
+        # All upcoming
+        other_upcoming = [m for m in scheduled if m.pick_confidence not in ("Very High", "High")]
+        if other_upcoming:
+            st.markdown(f"## Other Upcoming ({len(other_upcoming)})")
+            for m in other_upcoming[:20]:
                 _render_match_card(m)
 
         # Recent results
@@ -1558,8 +1545,7 @@ elif page == "Football Value Plays":
                     _render_match_card(m)
     else:
         st.info(
-            "Click **Refresh Matches** to fetch fixtures, odds, and predictions. "
-            "Make sure FOOTBALL_DATA_API_KEY and ODDS_API_KEY are configured."
+            "Click **Refresh Picks** to fetch fixtures and generate predictions."
         )
 
 

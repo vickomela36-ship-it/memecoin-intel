@@ -1,22 +1,19 @@
 """
-Football match prediction engine using ELO ratings and odds comparison
-to find value bets across international and club competitions.
+Football match prediction engine using ELO ratings.
+Outputs picks with probability, confidence, and upside for use on
+simplified platforms like Hotake and Picks.
 """
 
-import time
 import json
 import os
 import math
 import requests
 from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from config import (
     FOOTBALL_DATA_API,
     FOOTBALL_DATA_API_KEY,
-    ODDS_API,
-    ODDS_API_KEY,
     FOOTBALL_CACHE_FILE,
 )
 
@@ -40,6 +37,28 @@ DEFAULT_ELO = {
     "Scotland": 1600, "Turkey": 1590, "Czech Republic": 1580,
     "Austria": 1570, "Hungary": 1560, "Sweden": 1550, "Norway": 1540,
     "Romania": 1530, "Algeria": 1520, "China PR": 1400,
+    # Club teams
+    "Real Madrid": 2080, "Manchester City": 2070, "Bayern Munich": 2040,
+    "Liverpool": 2030, "FC Barcelona": 2020, "Arsenal": 2010,
+    "Paris Saint-Germain": 2000, "Inter Milan": 1990, "AC Milan": 1960,
+    "Juventus": 1950, "Borussia Dortmund": 1940, "Atlético Madrid": 1930,
+    "Chelsea": 1920, "Napoli": 1910, "Bayer Leverkusen": 1900,
+    "Tottenham Hotspur": 1880, "Aston Villa": 1860, "Newcastle United": 1850,
+    "RB Leipzig": 1840, "Atalanta": 1830, "AS Roma": 1810,
+    "Manchester United": 1870, "Benfica": 1850, "Porto": 1830,
+    "Sporting CP": 1810, "Ajax": 1800, "PSV Eindhoven": 1790,
+    "Feyenoord": 1770, "Celtic": 1760, "Rangers": 1740,
+    "Olympique Lyonnais": 1800, "Olympique Marseille": 1810,
+    "AS Monaco": 1790, "LOSC Lille": 1780, "Stade Rennais": 1740,
+    "VfB Stuttgart": 1800, "Eintracht Frankfurt": 1790,
+    "SC Freiburg": 1760, "VfL Wolfsburg": 1750, "1. FSV Mainz 05": 1720,
+    "Lazio": 1820, "Fiorentina": 1800, "Bologna": 1770, "Torino": 1750,
+    "Real Sociedad": 1840, "Athletic Club": 1820, "Villarreal": 1810,
+    "Real Betis": 1790, "Sevilla": 1800, "Girona": 1770,
+    "West Ham United": 1830, "Brighton & Hove Albion": 1830,
+    "Crystal Palace": 1790, "Fulham": 1780, "Brentford": 1780,
+    "Wolverhampton Wanderers": 1770, "Nottingham Forest": 1770,
+    "Everton": 1750, "Bournemouth": 1770, "Leicester City": 1760,
 }
 
 TEAM_ALIASES = {
@@ -54,6 +73,41 @@ TEAM_ALIASES = {
     "Bosnia and Herzegovina": "Bosnia",
     "Trinidad and Tobago": "Trinidad",
     "Korea, Republic of": "South Korea",
+    "FC Bayern München": "Bayern Munich",
+    "BV Borussia 09 Dortmund": "Borussia Dortmund",
+    "Club Atlético de Madrid": "Atlético Madrid",
+    "SSC Napoli": "Napoli",
+    "Bayer 04 Leverkusen": "Bayer Leverkusen",
+    "Tottenham Hotspur FC": "Tottenham Hotspur",
+    "Wolverhampton Wanderers FC": "Wolverhampton Wanderers",
+    "Newcastle United FC": "Newcastle United",
+    "Manchester City FC": "Manchester City",
+    "Manchester United FC": "Manchester United",
+    "Liverpool FC": "Liverpool",
+    "Arsenal FC": "Arsenal",
+    "Chelsea FC": "Chelsea",
+    "Aston Villa FC": "Aston Villa",
+    "West Ham United FC": "West Ham United",
+    "Brighton & Hove Albion FC": "Brighton & Hove Albion",
+    "Crystal Palace FC": "Crystal Palace",
+    "Fulham FC": "Fulham",
+    "Brentford FC": "Brentford",
+    "Everton FC": "Everton",
+    "AFC Bournemouth": "Bournemouth",
+    "Leicester City FC": "Leicester City",
+    "Nottingham Forest FC": "Nottingham Forest",
+    "Paris Saint-Germain FC": "Paris Saint-Germain",
+    "FC Barcelona": "FC Barcelona",
+    "Real Madrid CF": "Real Madrid",
+    "Club Atlético de Madrid": "Atlético Madrid",
+    "Villarreal CF": "Villarreal",
+    "Real Betis Balompié": "Real Betis",
+    "Sevilla FC": "Sevilla",
+    "Girona FC": "Girona",
+    "Real Sociedad de Fútbol": "Real Sociedad",
+    "SL Benfica": "Benfica",
+    "FC Porto": "Porto",
+    "AFC Ajax": "Ajax",
 }
 
 
@@ -69,23 +123,17 @@ class MatchPrediction:
     utc_date: str = ""
     competition: str = ""
     status: str = "SCHEDULED"
-    # ELO
     home_elo: float = 1500.0
     away_elo: float = 1500.0
     home_win_prob: float = 0.33
     draw_prob: float = 0.34
     away_win_prob: float = 0.33
-    # Best odds
-    best_home_odds: float = 0.0
-    best_draw_odds: float = 0.0
-    best_away_odds: float = 0.0
-    best_home_bookmaker: str = ""
-    best_draw_bookmaker: str = ""
-    best_away_bookmaker: str = ""
-    # All bookmaker odds for comparison
-    all_bookmaker_odds: list = field(default_factory=list)
-    # Value bets found
-    value_bets: list = field(default_factory=list)
+    # The pick
+    pick: str = ""
+    pick_probability: float = 0.0
+    pick_confidence: str = "Low"
+    upside: str = ""
+    elo_gap: float = 0.0
     # Score if finished
     home_score: int = None
     away_score: int = None
@@ -96,7 +144,6 @@ class MatchPrediction:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _load_json(path):
-    """Load data from a JSON file. Returns None if file missing or corrupt."""
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -107,7 +154,6 @@ def _load_json(path):
 
 
 def _save_json(path, data):
-    """Persist data to a JSON file."""
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -116,7 +162,6 @@ def _save_json(path, data):
 
 
 def load_elo_ratings():
-    """Load ELO ratings from disk, falling back to DEFAULT_ELO."""
     saved = _load_json(ELO_RATINGS_FILE)
     if saved and isinstance(saved, dict):
         return saved
@@ -124,25 +169,14 @@ def load_elo_ratings():
 
 
 def save_elo_ratings(ratings):
-    """Persist updated ELO ratings to disk."""
     _save_json(ELO_RATINGS_FILE, ratings)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Data Fetching (thread-safe, no @st.cache_data)
+# Data Fetching
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _fetch_football_matches(competition="WC", status=None):
-    """
-    Fetch matches from football-data.org for a given competition.
-
-    Args:
-        competition: Competition code (e.g. "WC", "CL", "EC", "FL1").
-        status: Optional filter — "SCHEDULED", "LIVE", or "FINISHED".
-
-    Returns:
-        List of match dicts from the API, or empty list on error.
-    """
     if not FOOTBALL_DATA_API_KEY:
         return []
 
@@ -161,288 +195,77 @@ def _fetch_football_matches(competition="WC", status=None):
         return []
 
 
-def _fetch_football_standings(competition="WC"):
-    """
-    Fetch standings from football-data.org for a given competition.
-
-    Returns:
-        Standings data dict, or empty dict on error.
-    """
-    if not FOOTBALL_DATA_API_KEY:
-        return {}
-
-    url = f"{FOOTBALL_DATA_API}/competitions/{competition}/standings"
-    headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
-
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except (requests.RequestException, ValueError):
-        return {}
-
-
-def _fetch_odds(sport="soccer_fifa_world_cup", regions="us,uk,eu", markets="h2h"):
-    """
-    Fetch odds from the-odds-api.com for a given sport.
-
-    Returns:
-        List of event dicts, each containing bookmaker odds. Empty list on error.
-    """
-    if not ODDS_API_KEY:
-        return []
-
-    url = f"{ODDS_API}/sports/{sport}/odds"
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": regions,
-        "markets": markets,
-    }
-
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except (requests.RequestException, ValueError):
-        return []
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ELO System
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _get_elo(team_name, ratings):
-    """
-    Look up a team's ELO rating, resolving aliases first.
-    Defaults to 1500 for unknown teams.
-    """
+    if not team_name:
+        return 1500
     canonical = TEAM_ALIASES.get(team_name, team_name)
     return ratings.get(canonical, 1500)
 
 
 def _compute_elo_probabilities(home_elo, away_elo, home_advantage=65):
-    """
-    Compute match outcome probabilities from ELO ratings.
-
-    Returns:
-        (home_win_prob, draw_prob, away_win_prob) — sums to ~1.0
-    """
-    # Expected score for home team (logistic curve)
     expected_home = 1.0 / (1.0 + 10.0 ** ((away_elo - home_elo - home_advantage) / 400.0))
-
-    # Draw probability — peaks at ~27% for equal teams, drops for mismatches
     rating_diff = home_elo - away_elo + home_advantage
     draw_prob = 0.27 * math.exp(-abs(rating_diff) / 600.0)
-
-    # Distribute remaining probability between home and away wins
     home_win = expected_home * (1.0 - draw_prob)
     away_win = (1.0 - expected_home) * (1.0 - draw_prob)
-
     return (home_win, draw_prob, away_win)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Value Bet Detection
+# Pick Logic
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _find_value_bets(home_prob, draw_prob, away_prob, bookmaker_odds):
-    """
-    Compare model probabilities against bookmaker odds to find value bets.
+def _determine_pick(home_team, away_team, home_prob, draw_prob, away_prob, elo_gap):
+    """Determine the best pick, its confidence, and the upside narrative."""
+    probs = {"home": home_prob, "draw": draw_prob, "away": away_prob}
+    best_outcome = max(probs, key=probs.get)
+    best_prob = probs[best_outcome]
 
-    Args:
-        home_prob: Model probability of home win.
-        draw_prob: Model probability of draw.
-        away_prob: Model probability of away win.
-        bookmaker_odds: List of dicts, each with keys:
-            bookmaker, home_odds, draw_odds, away_odds.
+    if best_outcome == "home":
+        pick = home_team
+    elif best_outcome == "away":
+        pick = away_team
+    else:
+        pick = "Draw"
 
-    Returns:
-        List of value bet dicts with outcome, edge, kelly_fraction, etc.
-    """
-    value_bets = []
-    edge_threshold = 0.02  # 2% minimum edge
+    # Confidence based on probability dominance
+    if best_prob >= 0.60:
+        confidence = "Very High"
+    elif best_prob >= 0.48:
+        confidence = "High"
+    elif best_prob >= 0.38:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
 
-    outcomes = [
-        ("Home Win", home_prob, "home_odds"),
-        ("Draw", draw_prob, "draw_odds"),
-        ("Away Win", away_prob, "away_odds"),
-    ]
+    # Upside — what makes this pick interesting
+    abs_gap = abs(elo_gap)
+    if abs_gap >= 150 and best_prob >= 0.55:
+        upside = "Strong favorite, high-probability pick"
+    elif abs_gap >= 150 and best_prob < 0.55:
+        upside = "Clear underdog story — massive upside if they pull it off"
+    elif abs_gap < 50:
+        upside = "Coin-flip match — small edges matter here"
+    elif best_prob >= 0.45:
+        upside = "Slight lean with home advantage baked in"
+    else:
+        upside = "Moderate edge — worth a look"
 
-    for outcome_name, model_prob, odds_key in outcomes:
-        for bookie in bookmaker_odds:
-            decimal_odds = bookie.get(odds_key, 0)
-            if decimal_odds <= 1.0:
-                continue
+    # Override: if draw is close to the best, flag it
+    if best_outcome != "draw" and draw_prob > 0.24:
+        upside += " | Draw is live (~{:.0%})".format(draw_prob)
 
-            implied_prob = 1.0 / decimal_odds
-            edge = model_prob - implied_prob
+    # Underdog upside callout
+    if best_outcome == "away" and away_prob < 0.40:
+        upside = f"Underdog pick! {away_team} at {away_prob:.0%} — high upside if right"
+    elif best_outcome == "home" and home_prob < 0.40:
+        upside = f"Underdog pick! {home_team} at {home_prob:.0%} — high upside if right"
 
-            if edge > edge_threshold:
-                # Kelly criterion: fraction of bankroll to wager
-                kelly = (model_prob * decimal_odds - 1.0) / (decimal_odds - 1.0)
-                kelly = min(kelly, 0.25)  # Cap at 25%
-
-                # Confidence classification
-                if edge > 0.10:
-                    confidence = "High"
-                elif edge > 0.05:
-                    confidence = "Medium"
-                else:
-                    confidence = "Low"
-
-                value_bets.append({
-                    "outcome": outcome_name,
-                    "model_probability": round(model_prob, 4),
-                    "implied_probability": round(implied_prob, 4),
-                    "edge": round(edge, 4),
-                    "kelly_fraction": round(kelly, 4),
-                    "bookmaker": bookie.get("bookmaker", "Unknown"),
-                    "decimal_odds": decimal_odds,
-                    "confidence": confidence,
-                })
-
-    return value_bets
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Match-Odds Joining
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _normalize_team_name(name):
-    """Normalize a team name for fuzzy comparison."""
-    if not name:
-        return ""
-    canonical = TEAM_ALIASES.get(name, name)
-    return canonical.lower().strip()
-
-
-def _match_odds_to_fixtures(matches, odds_events):
-    """
-    Join football-data.org match fixtures with odds API events.
-
-    Matches are paired by comparing team names (with alias resolution)
-    and kick-off dates (within 1 day tolerance).
-
-    Returns:
-        List of dicts, each combining match data with matched odds.
-    """
-    results = []
-
-    for match in matches:
-        home = match.get("homeTeam", {}).get("name", "")
-        away = match.get("awayTeam", {}).get("name", "")
-        utc_date_str = match.get("utcDate", "")
-
-        # Parse match date
-        match_date = None
-        if utc_date_str:
-            try:
-                match_date = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                pass
-
-        home_norm = _normalize_team_name(home)
-        away_norm = _normalize_team_name(away)
-
-        matched_odds = None
-        for event in odds_events:
-            event_home = _normalize_team_name(event.get("home_team", ""))
-            event_away = _normalize_team_name(event.get("away_team", ""))
-
-            # Check team name match (either order)
-            names_match = (
-                (home_norm in event_home or event_home in home_norm) and
-                (away_norm in event_away or event_away in away_norm)
-            )
-            if not names_match:
-                continue
-
-            # Check date proximity (within 1 day)
-            if match_date and event.get("commence_time"):
-                try:
-                    event_date = datetime.fromisoformat(
-                        event["commence_time"].replace("Z", "+00:00")
-                    )
-                    if abs((match_date - event_date).total_seconds()) > 86400:
-                        continue
-                except (ValueError, TypeError):
-                    pass
-
-            matched_odds = event
-            break
-
-        results.append({
-            "match": match,
-            "odds": matched_odds,
-        })
-
-    return results
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Odds Extraction Helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _extract_bookmaker_odds(odds_event):
-    """
-    Extract structured bookmaker odds from an odds API event.
-
-    Returns:
-        List of dicts with: bookmaker, home_odds, draw_odds, away_odds.
-    """
-    if not odds_event:
-        return []
-
-    bookmaker_odds = []
-    home_team = odds_event.get("home_team", "")
-
-    for bookie in odds_event.get("bookmakers", []):
-        bookie_name = bookie.get("title", bookie.get("key", "Unknown"))
-        for market in bookie.get("markets", []):
-            if market.get("key") != "h2h":
-                continue
-
-            odds_dict = {"bookmaker": bookie_name, "home_odds": 0, "draw_odds": 0, "away_odds": 0}
-            for outcome in market.get("outcomes", []):
-                name = outcome.get("name", "")
-                price = outcome.get("price", 0)
-                if name == home_team:
-                    odds_dict["home_odds"] = price
-                elif name == "Draw":
-                    odds_dict["draw_odds"] = price
-                else:
-                    odds_dict["away_odds"] = price
-
-            bookmaker_odds.append(odds_dict)
-
-    return bookmaker_odds
-
-
-def _find_best_odds(bookmaker_odds):
-    """
-    Find the best (highest) odds per outcome across all bookmakers.
-
-    Returns:
-        Dict with best_home_odds, best_draw_odds, best_away_odds and
-        corresponding best_*_bookmaker fields.
-    """
-    best = {
-        "best_home_odds": 0.0, "best_draw_odds": 0.0, "best_away_odds": 0.0,
-        "best_home_bookmaker": "", "best_draw_bookmaker": "", "best_away_bookmaker": "",
-    }
-
-    for bookie in bookmaker_odds:
-        if bookie.get("home_odds", 0) > best["best_home_odds"]:
-            best["best_home_odds"] = bookie["home_odds"]
-            best["best_home_bookmaker"] = bookie.get("bookmaker", "")
-        if bookie.get("draw_odds", 0) > best["best_draw_odds"]:
-            best["best_draw_odds"] = bookie["draw_odds"]
-            best["best_draw_bookmaker"] = bookie.get("bookmaker", "")
-        if bookie.get("away_odds", 0) > best["best_away_odds"]:
-            best["best_away_odds"] = bookie["away_odds"]
-            best["best_away_bookmaker"] = bookie.get("bookmaker", "")
-
-    return best
+    return pick, best_prob, confidence, upside
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -450,12 +273,6 @@ def _find_best_odds(bookmaker_odds):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_available_competitions():
-    """
-    List available competitions from football-data.org.
-
-    Returns:
-        List of dicts with code, name, and current_season info.
-    """
     if not FOOTBALL_DATA_API_KEY:
         return []
 
@@ -466,7 +283,6 @@ def get_available_competitions():
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-
         competitions = []
         for comp in data.get("competitions", []):
             current_season = comp.get("currentSeason", {})
@@ -487,87 +303,33 @@ def get_available_competitions():
 
 def get_match_predictions(competition="WC"):
     """
-    Build match predictions with ELO probabilities and value bets.
-
-    Fetches matches and odds in parallel, computes ELO-based win/draw/loss
-    probabilities, matches them against bookmaker odds, and identifies
-    value bets where the model edge exceeds 2%.
-
-    Args:
-        competition: Competition code — "WC" (World Cup), "CL" (Champions League),
-                     "EC" (European Championship), "FL1" (Ligue 1), etc.
-
-    Returns:
-        List of MatchPrediction dataclass instances, sorted by date.
+    Build match predictions with ELO probabilities, picks, and upside.
+    No odds/bookmaker data — pure model-driven picks.
     """
     ratings = load_elo_ratings()
+    matches = _fetch_football_matches(competition)
 
-    # Map competition codes to odds API sport keys
-    comp_to_sport = {
-        "WC": "soccer_fifa_world_cup",
-        "CL": "soccer_uefa_champions_league",
-        "EC": "soccer_uefa_euro",
-        "FL1": "soccer_france_ligue_one",
-        "PL": "soccer_epl",
-        "BL1": "soccer_germany_bundesliga",
-        "SA": "soccer_italy_serie_a",
-        "PD": "soccer_spain_la_liga",
-    }
-    sport_key = comp_to_sport.get(competition, "soccer_fifa_world_cup")
-
-    # Fetch matches and odds in parallel
-    matches = []
-    odds_events = []
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_matches = executor.submit(_fetch_football_matches, competition)
-        future_odds = executor.submit(_fetch_odds, sport_key)
-
-        for future in as_completed([future_matches, future_odds]):
-            try:
-                if future is future_matches:
-                    matches = future.result()
-                else:
-                    odds_events = future.result()
-            except Exception:
-                pass
-
-    # If primary competition returned nothing, try fallback competitions
     if not matches and competition == "WC":
-        fallback_codes = ["EC", "CL", "FL1", "PL"]
-        for code in fallback_codes:
+        for code in ["EC", "CL", "PL", "FL1"]:
             matches = _fetch_football_matches(code)
             if matches:
                 competition = code
-                sport_key = comp_to_sport.get(code, sport_key)
-                # Re-fetch odds for the new sport
-                odds_events = _fetch_odds(sport_key)
                 break
 
-    # Join matches with odds
-    joined = _match_odds_to_fixtures(matches, odds_events)
-
     predictions = []
-    for item in joined:
-        match = item["match"]
-        odds_event = item["odds"]
+    for match in matches:
+        home_name = match.get("homeTeam", {}).get("name") or "Unknown"
+        away_name = match.get("awayTeam", {}).get("name") or "Unknown"
 
-        home_name = match.get("homeTeam", {}).get("name", "Unknown")
-        away_name = match.get("awayTeam", {}).get("name", "Unknown")
-
-        # ELO lookup and probability computation
         home_elo = _get_elo(home_name, ratings)
         away_elo = _get_elo(away_name, ratings)
+        elo_gap = home_elo - away_elo
         home_prob, draw_prob, away_prob = _compute_elo_probabilities(home_elo, away_elo)
 
-        # Extract odds
-        bookmaker_odds = _extract_bookmaker_odds(odds_event)
-        best = _find_best_odds(bookmaker_odds)
+        pick, pick_prob, confidence, upside = _determine_pick(
+            home_name, away_name, home_prob, draw_prob, away_prob, elo_gap
+        )
 
-        # Detect value bets
-        value_bets = _find_value_bets(home_prob, draw_prob, away_prob, bookmaker_odds)
-
-        # Extract score if available
         score = match.get("score", {})
         full_time = score.get("fullTime", {}) if score else {}
         home_score = full_time.get("home") if full_time else None
@@ -585,20 +347,15 @@ def get_match_predictions(competition="WC"):
             home_win_prob=round(home_prob, 4),
             draw_prob=round(draw_prob, 4),
             away_win_prob=round(away_prob, 4),
-            best_home_odds=best["best_home_odds"],
-            best_draw_odds=best["best_draw_odds"],
-            best_away_odds=best["best_away_odds"],
-            best_home_bookmaker=best["best_home_bookmaker"],
-            best_draw_bookmaker=best["best_draw_bookmaker"],
-            best_away_bookmaker=best["best_away_bookmaker"],
-            all_bookmaker_odds=bookmaker_odds,
-            value_bets=value_bets,
+            pick=pick,
+            pick_probability=round(pick_prob, 4),
+            pick_confidence=confidence,
+            upside=upside,
+            elo_gap=round(elo_gap, 1),
             home_score=home_score,
             away_score=away_score,
         )
         predictions.append(pred)
 
-    # Sort by date ascending
     predictions.sort(key=lambda p: p.utc_date or "")
-
     return predictions
