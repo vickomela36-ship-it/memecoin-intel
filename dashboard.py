@@ -35,7 +35,7 @@ from confidence_scorer import (
 )
 from crypto_predictions import (
     get_all_predictions, get_prediction_history, log_prediction,
-    CryptoPrediction, PriceTarget,
+    CryptoPrediction, PriceTarget, TimePrediction,
 )
 from football_predictions import (
     get_match_predictions, get_available_competitions, MatchPrediction,
@@ -948,6 +948,35 @@ def _render_crypto_card(pred):
     k2.metric("Support", f"${pred.support:,.0f}")
     k3.metric("Resistance", f"${pred.resistance:,.0f}")
     k4.metric("Daily Vol", f"{pred.volatility_daily:.1f}%")
+
+    # Time-based predictions (2h, 18h, 24h)
+    if pred.time_predictions:
+        st.markdown("**Price Predictions**")
+        tp_cols = st.columns(len(pred.time_predictions))
+        for i, tp in enumerate(pred.time_predictions):
+            with tp_cols[i]:
+                tp_up = tp.change_pct >= 0
+                tp_clr = GREEN if tp_up else RED
+                tp_arrow = "▲" if tp_up else "▼"
+                tp_conf_clr = GREEN if tp.confidence == "High" else (
+                    BLUE if tp.confidence == "Medium" else GREY)
+                st.markdown(
+                    f"<div style='text-align:center;padding:12px;border-radius:8px;"
+                    f"background:#1a1a2e;border:1px solid {tp_clr}30'>"
+                    f"<div style='color:#aaa;font-size:12px;margin-bottom:4px'>"
+                    f"{tp.hours}h from now</div>"
+                    f"<div style='color:{tp_clr};font-size:22px;font-weight:900'>"
+                    f"${tp.predicted_price:,.2f}</div>"
+                    f"<div style='color:{tp_clr};font-size:13px'>"
+                    f"{tp_arrow} {tp.change_pct:+.2f}%</div>"
+                    f"<div style='color:#666;font-size:11px;margin-top:4px'>"
+                    f"${tp.range_low:,.0f} — ${tp.range_high:,.0f}</div>"
+                    f"<div style='color:{tp_conf_clr};font-size:11px'>"
+                    f"{tp.confidence} conf</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown("")
 
     # High probability targets
     st.markdown("**Forecasted Prices (High Probability)**")

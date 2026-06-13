@@ -132,6 +132,16 @@ class PriceTarget:
 
 
 @dataclass
+class TimePrediction:
+    hours: int = 0
+    predicted_price: float = 0.0
+    change_pct: float = 0.0
+    range_low: float = 0.0
+    range_high: float = 0.0
+    confidence: str = ""
+
+
+@dataclass
 class CryptoPrediction:
     asset: str = ""
     current_price: float = 0.0
@@ -152,6 +162,8 @@ class CryptoPrediction:
     fear_greed_label: str = "Neutral"
     funding_rate: float = 0.0
     volatility_daily: float = 0.0
+    # Time-based predictions (2h, 18h, 24h)
+    time_predictions: list = field(default_factory=list)
     # Forecasts
     high_prob_targets: list = field(default_factory=list)
     low_prob_upside: list = field(default_factory=list)
@@ -262,6 +274,38 @@ def _build_forecast(asset, config):
         confidence = "MEDIUM"
     else:
         confidence = "LOW"
+
+    # ── Time-based price predictions (2h, 18h, 24h) ───────────────────
+    # Hourly vol from daily vol (assuming ~24 trading hours)
+    hourly_vol = daily_vol / math.sqrt(24)
+    # Drift = directional bias scaled by score strength (max ~100)
+    drift_per_hour = (score / 100.0) * hourly_vol * 0.3
+
+    time_predictions = []
+    for hours in [2, 18, 24]:
+        expected_move = drift_per_hour * hours * current_price
+        random_range = hourly_vol * math.sqrt(hours) * current_price
+
+        predicted = current_price + expected_move
+        range_low = predicted - random_range
+        range_high = predicted + random_range
+
+        # Confidence decreases with time horizon
+        if hours <= 2:
+            tp_conf = "High" if abs(score) > 30 else "Medium"
+        elif hours <= 18:
+            tp_conf = "Medium" if abs(score) > 30 else "Low"
+        else:
+            tp_conf = "Medium" if abs(score) > 50 else "Low"
+
+        time_predictions.append(TimePrediction(
+            hours=hours,
+            predicted_price=round(predicted, 2),
+            change_pct=round((predicted / current_price - 1) * 100, 2),
+            range_low=round(range_low, 2),
+            range_high=round(range_high, 2),
+            confidence=tp_conf,
+        ))
 
     # ── Build price targets ──────────────────────────────────────────────
     weekly_move = daily_vol * math.sqrt(7) * current_price
@@ -435,6 +479,7 @@ def _build_forecast(asset, config):
         fear_greed_label=fg_label,
         funding_rate=round(avg_funding * 100, 4),
         volatility_daily=round(daily_vol * 100, 2),
+        time_predictions=time_predictions,
         high_prob_targets=high_prob_targets,
         low_prob_upside=low_prob_upside,
         updated_at=datetime.now(timezone.utc).isoformat(),
