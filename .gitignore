@@ -1,7 +1,9 @@
 __pycache__/
 *.pyc
+*.pyo
 .env
-trades.json
-watchlist.json
-signals_log.json
-degen_signals_log.json
+*.json
+!package.json
+.streamlit/
+.venv/
+venv/

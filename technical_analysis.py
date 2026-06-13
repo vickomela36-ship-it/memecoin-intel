@@ -1,13 +1,15 @@
 """
-technical_analysis.py — Fibonacci, RSI, VWAP, volume profile, support/resistance,
-and momentum shift detection using Birdeye OHLCV candle data.
+Technical analysis module using Birdeye OHLCV candle data.
 
-Falls back gracefully when Birdeye is unavailable — returns neutral scores.
+Provides RSI, Fibonacci retracement, VWAP, volume profile,
+support/resistance detection, and momentum shift analysis
+for Solana memecoin evaluation.
 """
 
 import time
 import requests
 from dataclasses import dataclass, field
+
 from config import (
     BIRDEYE_API_KEY, BIRDEYE_API,
     RSI_PERIOD, RSI_OVERSOLD, RSI_OVERBOUGHT,
@@ -16,63 +18,76 @@ from config import (
 )
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data class
+# ═══════════════════════════════════════════════════════════════════════════════
+
 @dataclass
 class TAResult:
     available: bool = False
-
     # Fibonacci
     swing_high: float = 0.0
     swing_low: float = 0.0
+    ath: float = 0.0
+    retracement_from_ath_pct: float = 0.0
     fib_levels: dict = field(default_factory=dict)
     nearest_fib: float = 0.0
     nearest_fib_level: float = 0.0
     fib_proximity_pct: float = 100.0
-
     # RSI
     rsi_1m: float = 50.0
     rsi_5m: float = 50.0
     rsi_signal: str = "NEUTRAL"
-
     # VWAP
     vwap: float = 0.0
     price_vs_vwap_pct: float = 0.0
     vwap_reclaim: bool = False
-
-    # Volume profile
-    volume_recovery_ratio: float = 0.0
+    # Volume
     volume_trend: str = "UNKNOWN"
-
-    # Support / Resistance
+    volume_recovery_ratio: float = 1.0
+    # Support/Resistance
     support_levels: list = field(default_factory=list)
     resistance_levels: list = field(default_factory=list)
-
     # Momentum
     momentum_shift: float = 0.0
     momentum_signal: str = "UNKNOWN"
 
-    # ATH tracking
-    ath: float = 0.0
-    retracement_from_ath_pct: float = 0.0
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Birdeye OHLCV fetch
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_ohlcv(address: str, interval: str = "5m", limit: int = 288) -> list:
-    """Fetch OHLCV candles from Birdeye."""
-    now = int(time.time())
-    if interval == "1m":
-        time_from = now - limit * 60
-    elif interval == "5m":
-        time_from = now - limit * 300
-    elif interval == "1H":
-        time_from = now - limit * 3600
-    else:
-        time_from = now - limit * 300
+def _fetch_ohlcv(mint_address: str, interval: str, limit: int) -> list:
+    """Fetch OHLCV candle data from Birdeye.
 
+    Args:
+        mint_address: Solana token mint address.
+        interval: Candle interval (e.g. "1m", "5m").
+        limit: Number of candles to fetch.
+
+    Returns:
+        List of candle dicts with keys o, h, l, c, v, unixTime,
+        or empty list on any error.
+    """
     try:
-        r = requests.get(
+        now = int(time.time())
+        # Map interval string to seconds per candle
+        interval_seconds = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "1H": 3600,
+            "4H": 14400,
+            "1D": 86400,
+        }
+        seconds_per_candle = interval_seconds.get(interval, 60)
+        time_from = now - (limit * seconds_per_candle)
+
+        resp = requests.get(
             f"{BIRDEYE_API}/defi/ohlcv",
             params={
-                "address": address,
                 "type": interval,
+                "address": mint_address,
                 "time_from": time_from,
                 "time_to": now,
             },
@@ -80,297 +95,413 @@ def _fetch_ohlcv(address: str, interval: str = "5m", limit: int = 288) -> list:
                 "X-API-KEY": BIRDEYE_API_KEY,
                 "x-chain": "solana",
             },
-            timeout=15,
+            timeout=12,
         )
-        r.raise_for_status()
-        data = r.json()
-        items = (data.get("data") or {}).get("items") or []
-        return items
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("data", {}).get("items", [])
+        return items if isinstance(items, list) else []
     except Exception:
         return []
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RSI — Wilder's smoothed
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def calculate_rsi(closes: list, period: int = RSI_PERIOD) -> float:
-    """Wilder's smoothed RSI."""
+    """Calculate RSI using Wilder's smoothing method.
+
+    Args:
+        closes: List of closing prices (oldest first).
+        period: Look-back period (default from config).
+
+    Returns:
+        RSI value between 0 and 100, or 50.0 if insufficient data.
+    """
     if len(closes) < period + 1:
         return 50.0
 
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    gains = [max(d, 0) for d in deltas]
-    losses = [max(-d, 0) for d in deltas]
 
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
+    # Seed averages with simple mean of first `period` deltas
+    gains = [d if d > 0 else 0.0 for d in deltas[:period]]
+    losses = [-d if d < 0 else 0.0 for d in deltas[:period]]
 
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    # Wilder's smoothing for remaining deltas
+    for d in deltas[period:]:
+        gain = d if d > 0 else 0.0
+        loss = -d if d < 0 else 0.0
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
 
     if avg_loss == 0:
         return 100.0
+
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return round(rsi, 2)
 
 
-def calculate_fibonacci(high: float, low: float) -> dict:
-    """Fibonacci retracement levels from swing high to swing low."""
-    if high <= low or high == 0:
-        return {}
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fibonacci retracement
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calculate_fibonacci(high: float, low: float, current_price: float) -> dict:
+    """Calculate Fibonacci retracement levels from a swing high/low range.
+
+    Args:
+        high: Swing high price.
+        low: Swing low price.
+        current_price: Current token price.
+
+    Returns:
+        Dictionary with keys: fib_levels, nearest_fib, nearest_fib_level,
+        fib_proximity_pct.
+    """
     diff = high - low
-    levels = {0.0: high, 1.0: low}
-    for lvl in FIB_LEVELS:
-        levels[lvl] = high - diff * lvl
-    return levels
+    if diff <= 0 or high == 0:
+        return {
+            "fib_levels": {},
+            "nearest_fib": 0.0,
+            "nearest_fib_level": 0.0,
+            "fib_proximity_pct": 100.0,
+        }
 
+    # Retracement levels: price at each fib ratio measured down from the high
+    fib_prices = {}
+    for level in FIB_LEVELS:
+        fib_prices[level] = high - (diff * level)
+
+    # Find the nearest fib level to current price
+    nearest_level = 0.0
+    nearest_price = 0.0
+    min_distance = float("inf")
+
+    for level, price in fib_prices.items():
+        distance = abs(current_price - price)
+        if distance < min_distance:
+            min_distance = distance
+            nearest_level = level
+            nearest_price = price
+
+    # Proximity as percentage distance from nearest fib
+    if nearest_price > 0:
+        proximity = abs(current_price - nearest_price) / nearest_price * 100.0
+    else:
+        proximity = 100.0
+
+    return {
+        "fib_levels": fib_prices,
+        "nearest_fib": nearest_price,
+        "nearest_fib_level": nearest_level,
+        "fib_proximity_pct": round(proximity, 2),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VWAP
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def calculate_vwap(candles: list) -> float:
-    """Volume-weighted average price from candle data."""
-    cum_vol = 0.0
-    cum_tp_vol = 0.0
+    """Calculate Volume-Weighted Average Price from candle data.
+
+    Args:
+        candles: List of candle dicts with keys h, l, c, v.
+
+    Returns:
+        VWAP price, or 0.0 if no volume data.
+    """
+    cumulative_tp_vol = 0.0
+    cumulative_vol = 0.0
+
     for c in candles:
-        h = float(c.get("h", 0) or 0)
-        l = float(c.get("l", 0) or 0)
-        cl = float(c.get("c", 0) or 0)
-        v = float(c.get("v", 0) or 0)
-        typical = (h + l + cl) / 3
-        cum_tp_vol += typical * v
-        cum_vol += v
-    return cum_tp_vol / cum_vol if cum_vol > 0 else 0
+        h = float(c.get("h", 0))
+        l = float(c.get("l", 0))
+        close = float(c.get("c", 0))
+        vol = float(c.get("v", 0))
+
+        typical_price = (h + l + close) / 3.0
+        cumulative_tp_vol += typical_price * vol
+        cumulative_vol += vol
+
+    if cumulative_vol == 0:
+        return 0.0
+
+    return cumulative_tp_vol / cumulative_vol
 
 
-def analyze_volume_profile(candles: list) -> dict:
-    """Compare volume during dump vs recovery to detect dead cat bounces."""
-    if len(candles) < 10:
-        return {"trend": "UNKNOWN", "ratio": 0.0}
+# ═══════════════════════════════════════════════════════════════════════════════
+# Volume profile analysis
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    closes = [float(c.get("c", 0) or 0) for c in candles]
-    volumes = [float(c.get("v", 0) or 0) for c in candles]
+def analyze_volume_profile(candles: list) -> tuple:
+    """Analyze volume profile by comparing dump phase vs recovery phase.
 
-    if not closes or min(closes) == 0:
-        return {"trend": "UNKNOWN", "ratio": 0.0}
+    Splits candles into first half (dump) and second half (recovery),
+    compares average volumes.
 
-    min_idx = closes.index(min(closes))
+    Args:
+        candles: List of candle dicts with key v.
 
-    dump_vols = volumes[max(0, min_idx - 8) : min_idx + 1]
-    recovery_vols = volumes[min_idx + 1 :]
+    Returns:
+        Tuple of (trend_string, recovery_ratio).
+    """
+    if len(candles) < 4:
+        return ("UNKNOWN", 1.0)
 
-    avg_dump = sum(dump_vols) / len(dump_vols) if dump_vols else 1.0
-    avg_recovery = sum(recovery_vols) / len(recovery_vols) if recovery_vols else 0.0
+    mid = len(candles) // 2
+    first_half = candles[:mid]
+    second_half = candles[mid:]
 
-    ratio = avg_recovery / avg_dump if avg_dump > 0 else 0.0
+    first_vol = sum(float(c.get("v", 0)) for c in first_half)
+    second_vol = sum(float(c.get("v", 0)) for c in second_half)
 
-    if ratio > 1.5:
+    avg_first = first_vol / len(first_half) if first_half else 0
+    avg_second = second_vol / len(second_half) if second_half else 0
+
+    if avg_first == 0:
+        ratio = 1.0
+    else:
+        ratio = avg_second / avg_first
+
+    if ratio >= 1.5:
         trend = "STRONG_RECOVERY"
-    elif ratio > 0.8:
+    elif ratio >= 0.8:
         trend = "HEALTHY"
-    elif ratio > 0.3:
+    elif ratio >= 0.4:
         trend = "WEAK"
     else:
         trend = "DEAD_CAT"
 
-    return {"trend": trend, "ratio": ratio}
+    return (trend, round(ratio, 3))
 
 
-def find_support_resistance(candles: list, num_levels: int = 3) -> tuple:
-    """Detect support and resistance from swing highs/lows."""
-    if len(candles) < 5:
-        return [], []
+# ═══════════════════════════════════════════════════════════════════════════════
+# Support / Resistance detection
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    lows = [float(c.get("l", 0) or 0) for c in candles]
-    highs = [float(c.get("h", 0) or 0) for c in candles]
+def find_support_resistance(candles: list, window: int = 5) -> tuple:
+    """Find local minima (support) and maxima (resistance) in close prices.
 
+    Args:
+        candles: List of candle dicts with key c.
+        window: Number of candles on each side to compare.
+
+    Returns:
+        Tuple of (sorted support_levels, sorted resistance_levels).
+    """
+    closes = [float(c.get("c", 0)) for c in candles]
     supports = []
     resistances = []
 
-    for i in range(2, len(candles) - 2):
-        if lows[i] <= min(lows[i - 1], lows[i - 2], lows[i + 1], lows[i + 2]):
-            supports.append(lows[i])
-        if highs[i] >= max(
-            highs[i - 1], highs[i - 2], highs[i + 1], highs[i + 2]
-        ):
-            resistances.append(highs[i])
+    if len(closes) < (2 * window + 1):
+        return (supports, resistances)
 
-    supports = _cluster_levels(supports, num_levels)
-    resistances = _cluster_levels(resistances, num_levels)
-    return supports, resistances
+    for i in range(window, len(closes) - window):
+        local_slice = closes[i - window: i + window + 1]
+        current = closes[i]
+
+        # Local minimum → support
+        if current == min(local_slice):
+            supports.append(round(current, 10))
+
+        # Local maximum → resistance
+        if current == max(local_slice):
+            resistances.append(round(current, 10))
+
+    # De-duplicate and sort
+    supports = sorted(set(supports))
+    resistances = sorted(set(resistances))
+
+    return (supports, resistances)
 
 
-def _cluster_levels(levels: list, n: int) -> list:
-    """Cluster nearby price levels and return the n most significant."""
-    if not levels:
-        return []
-    levels = sorted(levels)
-    clusters = []
-    current = [levels[0]]
-
-    for i in range(1, len(levels)):
-        if current and levels[i] / current[-1] < 1.02:
-            current.append(levels[i])
-        else:
-            clusters.append(sum(current) / len(current))
-            current = [levels[i]]
-    if current:
-        clusters.append(sum(current) / len(current))
-
-    clusters.sort()
-    if len(clusters) <= n:
-        return clusters
-    step = len(clusters) // n
-    return [clusters[i * step] for i in range(n)]
-
+# ═══════════════════════════════════════════════════════════════════════════════
+# Momentum shift
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def calculate_momentum_shift(candles: list) -> tuple:
-    """Compare rate of descent vs rate of recovery. Higher = stronger reversal."""
-    if len(candles) < 12:
-        return 0.0, "UNKNOWN"
+    """Compare descent rate (first half) vs recovery rate (second half).
 
-    closes = [float(c.get("c", 0) or 0) for c in candles]
-    if not closes or min(closes) == 0:
-        return 0.0, "UNKNOWN"
+    Args:
+        candles: List of candle dicts with key c.
 
-    min_idx = closes.index(min(closes))
-    if min_idx < 3 or min_idx >= len(closes) - 3:
-        return 0.0, "UNKNOWN"
+    Returns:
+        Tuple of (shift_ratio, signal_string).
+    """
+    if len(candles) < 4:
+        return (0.0, "NO_REVERSAL")
 
-    descent_start = max(0, min_idx - 10)
-    descent_changes = [
-        closes[i] - closes[i - 1] for i in range(descent_start + 1, min_idx + 1)
-    ]
-    avg_descent = (
-        sum(descent_changes) / len(descent_changes) if descent_changes else 0
-    )
+    closes = [float(c.get("c", 0)) for c in candles]
+    mid = len(closes) // 2
 
-    recovery_end = min(len(closes), min_idx + 10)
-    recovery_changes = [
-        closes[i] - closes[i - 1] for i in range(min_idx + 1, recovery_end)
-    ]
-    avg_recovery = (
-        sum(recovery_changes) / len(recovery_changes) if recovery_changes else 0
-    )
+    first_half = closes[:mid]
+    second_half = closes[mid:]
 
-    if avg_descent >= 0:
-        return 0.0, "NO_REVERSAL"
+    # Descent rate: price drop per candle in first half
+    if len(first_half) >= 2:
+        descent = (first_half[0] - first_half[-1]) / len(first_half)
+    else:
+        descent = 0.0
 
-    shift = abs(avg_recovery / avg_descent) if avg_descent != 0 else 0.0
+    # Recovery rate: price rise per candle in second half
+    if len(second_half) >= 2:
+        recovery = (second_half[-1] - second_half[0]) / len(second_half)
+    else:
+        recovery = 0.0
 
-    if shift > 1.5:
+    # Avoid division by zero
+    if abs(descent) < 1e-15:
+        shift = recovery * 1e6 if recovery > 0 else 0.0
+    else:
+        shift = recovery / abs(descent)
+
+    if recovery > abs(descent) and descent > 0:
         signal = "STRONG_REVERSAL"
-    elif shift > 0.8:
+    elif recovery > 0.5 * abs(descent) and descent > 0:
         signal = "WEAK_REVERSAL"
     else:
         signal = "NO_REVERSAL"
 
-    return round(shift, 3), signal
+    return (round(shift, 3), signal)
 
 
-def _detect_vwap_reclaim(candles: list, vwap: float) -> bool:
-    """Check if price recently crossed from below to above VWAP."""
-    if len(candles) < 5 or vwap <= 0:
-        return False
-    recent = candles[-10:]
-    below_then_above = False
-    was_below = False
-    for c in recent:
-        cl = float(c.get("c", 0) or 0)
-        if cl < vwap:
-            was_below = True
-        elif was_below and cl >= vwap:
-            below_then_above = True
-    return below_then_above
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main entry point
+# ═══════════════════════════════════════════════════════════════════════════════
 
+def run_ta(mint_address: str, current_price: float) -> TAResult:
+    """Run full technical analysis for a token.
 
-def run_ta(mint_address: str, current_price: float = 0) -> TAResult:
-    """Run full technical analysis. Returns TAResult with all indicators."""
+    Fetches 1-minute and 5-minute OHLCV candles from Birdeye, then
+    computes RSI, Fibonacci retracements, VWAP, volume profile,
+    support/resistance, and momentum shift.
+
+    Args:
+        mint_address: Solana token mint address.
+        current_price: Current token price in USD.
+
+    Returns:
+        TAResult dataclass with all computed values.  If Birdeye data
+        is unavailable, returns TAResult with available=False and
+        neutral/default values.
+    """
     result = TAResult()
 
-    candles_5m = _fetch_ohlcv(mint_address, "5m", OHLCV_5M_CANDLES)
+    # ------------------------------------------------------------------
+    # Fetch candle data
+    # ------------------------------------------------------------------
     candles_1m = _fetch_ohlcv(mint_address, "1m", OHLCV_1M_CANDLES)
+    candles_5m = _fetch_ohlcv(mint_address, "5m", OHLCV_5M_CANDLES)
 
-    if not candles_5m and not candles_1m:
-        return result
+    if not candles_1m and not candles_5m:
+        return result  # available=False, all defaults
 
     result.available = True
-    primary = candles_5m if candles_5m else candles_1m
 
-    closes_5m = [float(c.get("c", 0) or 0) for c in candles_5m] if candles_5m else []
-    closes_1m = [float(c.get("c", 0) or 0) for c in candles_1m] if candles_1m else []
+    # Use whichever dataset has data; prefer 1m for granularity
+    primary_candles = candles_1m if candles_1m else candles_5m
 
-    # ── ATH + Fibonacci ──────────────────────────────────────────────────
-    if primary:
-        all_highs = [float(c.get("h", 0) or 0) for c in primary]
-        all_lows = [float(c.get("l", 0) or 0) for c in primary if float(c.get("l", 0) or 0) > 0]
-
-        if all_highs and all_lows:
-            result.swing_high = max(all_highs)
-            result.swing_low = min(all_lows)
-            result.ath = result.swing_high
-
-            if current_price > 0 and result.ath > 0:
-                result.retracement_from_ath_pct = (
-                    (result.ath - current_price) / result.ath * 100
-                )
-
-            result.fib_levels = calculate_fibonacci(
-                result.swing_high, result.swing_low
-            )
-
-            if current_price > 0 and result.fib_levels:
-                best_dist = float("inf")
-                for lvl, price in result.fib_levels.items():
-                    if price <= 0:
-                        continue
-                    dist = abs(current_price - price) / price * 100
-                    if dist < best_dist:
-                        best_dist = dist
-                        result.nearest_fib = price
-                        result.nearest_fib_level = lvl
-                result.fib_proximity_pct = best_dist
-
-    # ── RSI ──────────────────────────────────────────────────────────────
-    if closes_5m:
-        result.rsi_5m = calculate_rsi(closes_5m)
-    if closes_1m:
+    # ------------------------------------------------------------------
+    # RSI
+    # ------------------------------------------------------------------
+    if candles_1m:
+        closes_1m = [float(c.get("c", 0)) for c in candles_1m]
         result.rsi_1m = calculate_rsi(closes_1m)
 
-    avg_rsi = (result.rsi_1m + result.rsi_5m) / 2
-    if avg_rsi < RSI_OVERSOLD and (
-        (closes_1m and closes_1m[-1] > closes_1m[-3])
-        if len(closes_1m) >= 3
-        else False
-    ):
-        result.rsi_signal = "OVERSOLD_BOUNCING"
-    elif avg_rsi < RSI_OVERSOLD:
-        result.rsi_signal = "OVERSOLD"
-    elif avg_rsi > RSI_OVERBOUGHT:
+    if candles_5m:
+        closes_5m = [float(c.get("c", 0)) for c in candles_5m]
+        result.rsi_5m = calculate_rsi(closes_5m)
+
+    # RSI signal determination
+    rsi_primary = result.rsi_1m if candles_1m else result.rsi_5m
+    if rsi_primary < RSI_OVERSOLD:
+        # Check if RSI is rising (bouncing) by comparing last few values
+        rising = False
+        ref_closes = closes_1m if candles_1m else (closes_5m if candles_5m else [])
+        if len(ref_closes) >= RSI_PERIOD + 5:
+            rsi_prev = calculate_rsi(ref_closes[:-3])
+            rising = rsi_primary > rsi_prev
+        result.rsi_signal = "OVERSOLD_BOUNCING" if rising else "OVERSOLD"
+    elif rsi_primary > RSI_OVERBOUGHT:
         result.rsi_signal = "OVERBOUGHT"
     else:
         result.rsi_signal = "NEUTRAL"
 
-    # ── VWAP ─────────────────────────────────────────────────────────────
-    if primary:
-        result.vwap = calculate_vwap(primary)
-        if result.vwap > 0 and current_price > 0:
-            result.price_vs_vwap_pct = (
-                (current_price - result.vwap) / result.vwap * 100
-            )
-            result.vwap_reclaim = _detect_vwap_reclaim(primary, result.vwap)
+    # ------------------------------------------------------------------
+    # Fibonacci retracement
+    # ------------------------------------------------------------------
+    highs = [float(c.get("h", 0)) for c in primary_candles]
+    lows = [float(c.get("l", 0)) for c in primary_candles]
 
-    # ── Volume profile ───────────────────────────────────────────────────
-    if primary:
-        vp = analyze_volume_profile(primary)
-        result.volume_recovery_ratio = vp["ratio"]
-        result.volume_trend = vp["trend"]
+    swing_high = max(highs) if highs else 0.0
+    swing_low = min(lows) if lows else 0.0
 
-    # ── Support / Resistance ─────────────────────────────────────────────
-    if primary:
-        supports, resistances = find_support_resistance(primary)
-        result.support_levels = supports
-        result.resistance_levels = resistances
+    result.swing_high = swing_high
+    result.swing_low = swing_low
+    result.ath = swing_high
 
-    # ── Momentum shift ───────────────────────────────────────────────────
-    if primary:
-        shift, signal = calculate_momentum_shift(primary)
-        result.momentum_shift = shift
-        result.momentum_signal = signal
+    if swing_high > 0:
+        result.retracement_from_ath_pct = round(
+            (swing_high - current_price) / swing_high * 100.0, 2
+        )
+
+    fib_result = calculate_fibonacci(swing_high, swing_low, current_price)
+    result.fib_levels = fib_result["fib_levels"]
+    result.nearest_fib = fib_result["nearest_fib"]
+    result.nearest_fib_level = fib_result["nearest_fib_level"]
+    result.fib_proximity_pct = fib_result["fib_proximity_pct"]
+
+    # ------------------------------------------------------------------
+    # VWAP
+    # ------------------------------------------------------------------
+    result.vwap = calculate_vwap(primary_candles)
+
+    if result.vwap > 0:
+        result.price_vs_vwap_pct = round(
+            (current_price - result.vwap) / result.vwap * 100.0, 2
+        )
+
+    # Detect VWAP reclaim: price was below VWAP but crossed above
+    # in the last few candles
+    if result.vwap > 0 and len(primary_candles) >= 5:
+        recent = primary_candles[-5:]
+        below_then_above = False
+        for i, c in enumerate(recent):
+            c_close = float(c.get("c", 0))
+            if c_close < result.vwap and i < len(recent) - 1:
+                # Check if any subsequent candle closed above VWAP
+                for later in recent[i + 1:]:
+                    if float(later.get("c", 0)) > result.vwap:
+                        below_then_above = True
+                        break
+            if below_then_above:
+                break
+        result.vwap_reclaim = below_then_above
+
+    # ------------------------------------------------------------------
+    # Volume profile
+    # ------------------------------------------------------------------
+    result.volume_trend, result.volume_recovery_ratio = analyze_volume_profile(
+        primary_candles
+    )
+
+    # ------------------------------------------------------------------
+    # Support / Resistance
+    # ------------------------------------------------------------------
+    result.support_levels, result.resistance_levels = find_support_resistance(
+        primary_candles
+    )
+
+    # ------------------------------------------------------------------
+    # Momentum shift
+    # ------------------------------------------------------------------
+    result.momentum_shift, result.momentum_signal = calculate_momentum_shift(
+        primary_candles
+    )
 
     return result

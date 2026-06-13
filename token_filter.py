@@ -1,19 +1,29 @@
 """
-token_filter.py — Safety and eligibility checks for Solana tokens.
+token_filter.py — Safety and eligibility check module for Solana tokens.
 
-Uses rugcheck.xyz for mint/freeze authority, rug risks, and holder analysis.
-Uses DexScreener pair data for volume, liquidity, and token age.
+Uses rugcheck.xyz API, Helius RPC, and DexScreener pair data to evaluate
+whether a token passes safety thresholds for volume, liquidity, age,
+holder concentration, and rug-pull risk indicators.
 """
 
 import time
-import requests
+import logging
 from dataclasses import dataclass, field
+
+import requests
+
 from config import (
     HELIUS_RPC, RUGCHECK_API,
     MIN_24H_VOLUME, MIN_5M_VOLUME, MIN_LIQUIDITY,
     MIN_TOKEN_AGE_HOURS, MIN_HOLDER_COUNT, MAX_TOP10_HOLDER_PCT,
 )
 
+logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data class
+# ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class SafetyResult:
@@ -34,197 +44,274 @@ class SafetyResult:
     pass_reasons: list = field(default_factory=list)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def _safe_float(obj, *keys, default=0.0):
-    val = obj
-    for k in keys:
-        if isinstance(val, dict):
-            val = val.get(k)
+    """Safely traverse nested dicts and return a float, or *default* on any failure."""
+    current = obj
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
         else:
             return default
     try:
-        return float(val) if val is not None else default
-    except (ValueError, TypeError):
+        return float(current) if current is not None else default
+    except (TypeError, ValueError):
         return default
 
 
 def _check_rugcheck(mint_address: str) -> dict:
-    """Fetch rugcheck.xyz report. Returns full report or empty dict."""
+    """Fetch the rugcheck.xyz report for a token mint address.
+
+    Returns the parsed JSON dict on success, or an empty dict on any error.
+    """
+    url = f"{RUGCHECK_API}/tokens/{mint_address}/report"
     try:
-        r = requests.get(
-            f"{RUGCHECK_API}/tokens/{mint_address}/report",
-            timeout=12,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception:
+        resp = requests.get(url, timeout=12)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logger.warning("Rugcheck request failed for %s: %s", mint_address, exc)
         return {}
 
 
-def _check_helius_holders(mint_address: str) -> dict:
-    """Get top token holders via Helius RPC."""
-    try:
-        r = requests.post(
-            HELIUS_RPC,
-            json={
-                "jsonrpc": "2.0",
-                "id": "1",
-                "method": "getTokenLargestAccounts",
-                "params": [mint_address],
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
-        return r.json().get("result", {})
-    except Exception:
-        return {}
+def _check_helius_holders(mint_address: str) -> list:
+    """Get the largest token-account holders via Helius RPC (getTokenLargestAccounts).
 
+    Returns a list of holder dicts on success, or an empty list on any error.
+    Each item has at least ``amount`` (str) and ``uiAmount`` (float|None).
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTokenLargestAccounts",
+        "params": [mint_address],
+    }
+    try:
+        resp = requests.post(HELIUS_RPC, json=payload, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("result", {}).get("value", [])
+    except Exception as exc:
+        logger.warning("Helius holder request failed for %s: %s", mint_address, exc)
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main safety check
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def check_token_safety(mint_address: str, pair_data: dict) -> SafetyResult:
-    """
-    Run all safety checks. Hard fails (mint/freeze authority, known rug) block
-    the token entirely. Soft fails (low volume, young token) reduce confidence
-    but don't block.
+    """Run a comprehensive safety and eligibility check on a Solana token.
+
+    Parameters
+    ----------
+    mint_address : str
+        The token's mint address on Solana.
+    pair_data : dict
+        A DexScreener pair object containing volume, liquidity, and creation
+        timestamp fields.
+
+    Returns
+    -------
+    SafetyResult
+        Populated result with pass/fail verdict and supporting evidence.
     """
     result = SafetyResult()
 
-    # ── DexScreener-derived metrics ──────────────────────────────────────
+    # ── 1. Extract market data from pair_data ─────────────────────────────
     result.volume_24h = _safe_float(pair_data, "volume", "h24")
     result.volume_5m = _safe_float(pair_data, "volume", "m5")
     result.liquidity_usd = _safe_float(pair_data, "liquidity", "usd")
 
-    created = pair_data.get("pairCreatedAt")
-    if created:
+    # ── 2. Calculate token age ────────────────────────────────────────────
+    created_at_ms = pair_data.get("pairCreatedAt")
+    if created_at_ms:
         try:
-            age_ms = time.time() * 1000 - float(created)
-            result.token_age_hours = max(age_ms / (1000 * 3600), 0)
-        except (ValueError, TypeError):
-            pass
+            age_seconds = time.time() - (float(created_at_ms) / 1000.0)
+            result.token_age_hours = max(age_seconds / 3600.0, 0.0)
+        except (TypeError, ValueError):
+            result.token_age_hours = 0.0
 
-    if result.volume_24h < MIN_24H_VOLUME:
-        result.fail_reasons.append(
-            f"24h vol ${result.volume_24h:,.0f} < ${MIN_24H_VOLUME:,.0f}"
+    # ── 3. Threshold checks ──────────────────────────────────────────────
+    critical_fails = 0
+
+    if result.volume_24h >= MIN_24H_VOLUME:
+        result.pass_reasons.append(
+            f"24h volume ${result.volume_24h:,.0f} >= ${MIN_24H_VOLUME:,}"
         )
     else:
-        result.pass_reasons.append(f"24h vol ${result.volume_24h:,.0f}")
-
-    if result.volume_5m < MIN_5M_VOLUME:
         result.fail_reasons.append(
-            f"5m vol ${result.volume_5m:,.0f} < ${MIN_5M_VOLUME:,.0f}"
+            f"24h volume ${result.volume_24h:,.0f} < ${MIN_24H_VOLUME:,}"
         )
+        critical_fails += 1
 
-    if result.liquidity_usd < MIN_LIQUIDITY:
-        result.fail_reasons.append(
-            f"Liq ${result.liquidity_usd:,.0f} < ${MIN_LIQUIDITY:,.0f}"
+    if result.volume_5m >= MIN_5M_VOLUME:
+        result.pass_reasons.append(
+            f"5m volume ${result.volume_5m:,.0f} >= ${MIN_5M_VOLUME:,}"
         )
     else:
-        result.pass_reasons.append(f"Liq ${result.liquidity_usd:,.0f}")
-
-    if result.token_age_hours < MIN_TOKEN_AGE_HOURS:
         result.fail_reasons.append(
-            f"Age {result.token_age_hours:.1f}h < {MIN_TOKEN_AGE_HOURS}h"
+            f"5m volume ${result.volume_5m:,.0f} < ${MIN_5M_VOLUME:,}"
+        )
+        critical_fails += 1
+
+    if result.liquidity_usd >= MIN_LIQUIDITY:
+        result.pass_reasons.append(
+            f"Liquidity ${result.liquidity_usd:,.0f} >= ${MIN_LIQUIDITY:,}"
         )
     else:
-        result.pass_reasons.append(f"Age {result.token_age_hours:.0f}h")
+        result.fail_reasons.append(
+            f"Liquidity ${result.liquidity_usd:,.0f} < ${MIN_LIQUIDITY:,}"
+        )
+        critical_fails += 1
 
-    # ── Rugcheck.xyz — mint/freeze authority + rug risks ─────────────────
-    rug = _check_rugcheck(mint_address)
-    if rug:
-        score_val = rug.get("score")
-        risks = rug.get("risks") or []
+    if result.token_age_hours >= MIN_TOKEN_AGE_HOURS:
+        result.pass_reasons.append(
+            f"Token age {result.token_age_hours:.1f}h >= {MIN_TOKEN_AGE_HOURS}h"
+        )
+    else:
+        result.fail_reasons.append(
+            f"Token age {result.token_age_hours:.1f}h < {MIN_TOKEN_AGE_HOURS}h"
+        )
+        critical_fails += 1
 
-        if isinstance(score_val, (int, float)):
-            result.rug_score = str(score_val)
-            if score_val >= 800:
-                result.rug_risk_level = "good"
-                result.pass_reasons.append(f"Rug score {score_val} (good)")
-            elif score_val >= 500:
-                result.rug_risk_level = "warning"
-                result.pass_reasons.append(f"Rug score {score_val} (ok)")
-            else:
-                result.rug_risk_level = "danger"
-                result.fail_reasons.append(f"Rug score {score_val} (danger)")
-        else:
-            result.rug_score = str(score_val) if score_val else "Unknown"
+    # ── 4. Rugcheck analysis ─────────────────────────────────────────────
+    report = _check_rugcheck(mint_address)
 
-        has_mint = False
-        has_freeze = False
-        risk_names = []
+    if report:
+        # Score interpretation
+        raw_score = report.get("score")
+        if raw_score is not None:
+            try:
+                score_val = int(raw_score)
+                result.rug_score = str(score_val)
+                if score_val >= 800:
+                    result.rug_risk_level = "good"
+                    result.pass_reasons.append(
+                        f"Rug score {score_val} (Good)"
+                    )
+                elif score_val >= 500:
+                    result.rug_risk_level = "warning"
+                    result.pass_reasons.append(
+                        f"Rug score {score_val} (Warning)"
+                    )
+                else:
+                    result.rug_risk_level = "danger"
+                    result.fail_reasons.append(
+                        f"Rug score {score_val} (Danger)"
+                    )
+            except (TypeError, ValueError):
+                result.rug_score = str(raw_score)
+
+        # Parse individual risks
+        risks = report.get("risks", [])
         for risk in risks:
             name = risk.get("name", "")
+            description = risk.get("description", "")
             level = risk.get("level", "")
-            risk_names.append(name)
+            result.rug_risks.append(
+                {"name": name, "description": description, "level": level}
+            )
+
             name_lower = name.lower()
-            if "mint" in name_lower and "authority" in name_lower:
-                has_mint = True
-            if "freeze" in name_lower and "authority" in name_lower:
-                has_freeze = True
+            desc_lower = description.lower()
 
-        result.has_mint_authority = has_mint
-        result.has_freeze_authority = has_freeze
-        result.rug_risks = [
-            r.get("name", "")
-            for r in risks
-            if r.get("level") in ("danger", "warn", "error")
-        ]
+            # Detect mint authority
+            if "mint" in name_lower or "mint authority" in desc_lower:
+                result.has_mint_authority = True
 
-        if has_mint:
-            result.fail_reasons.append("Mint authority still active")
-        else:
-            result.pass_reasons.append("Mint authority revoked")
+            # Detect freeze authority
+            if "freeze" in name_lower or "freeze authority" in desc_lower:
+                result.has_freeze_authority = True
 
-        if has_freeze:
-            result.fail_reasons.append("Freeze authority still active")
-        else:
-            result.pass_reasons.append("Freeze authority revoked")
+        # Mint/freeze are soft warnings, not hard fails
+        if result.has_mint_authority:
+            result.fail_reasons.append("Mint authority still enabled (soft warning)")
 
-        # LP lock detection from rugcheck
-        markets = rug.get("markets") or []
+        if result.has_freeze_authority:
+            result.fail_reasons.append("Freeze authority still enabled (soft warning)")
+
+        # ── 5. LP lock detection from markets data ───────────────────────
+        markets = report.get("markets", [])
         for market in markets:
-            lp_locked = market.get("lp", {}).get("lpLockedPct", 0)
-            if lp_locked and float(lp_locked) > 50:
+            lp_locked = market.get("lp", {}).get("lpLocked", 0)
+            if isinstance(lp_locked, (int, float)) and lp_locked > 0:
                 result.lp_locked = True
-                result.pass_reasons.append(f"LP {float(lp_locked):.0f}% locked")
+                result.pass_reasons.append("LP liquidity is locked")
                 break
 
-        # Top holders from rugcheck
-        top_holders = rug.get("topHolders") or []
+        # Holder count from rugcheck
+        result.holder_count = report.get("totalHolders", 0) or report.get(
+            "holderCount", 0
+        )
+
+        # Top-10 holder concentration from rugcheck
+        top_holders = report.get("topHolders", [])
         if top_holders:
-            result.holder_count = len(top_holders)
-            top10_pct = sum(
-                float(h.get("pct", 0) or 0) for h in top_holders[:10]
+            total_pct = sum(
+                _safe_float(h, "pct") for h in top_holders[:10]
             )
-            result.top10_holder_pct = top10_pct
-
-            if top10_pct > MAX_TOP10_HOLDER_PCT:
-                result.fail_reasons.append(
-                    f"Top 10 hold {top10_pct:.0f}% > {MAX_TOP10_HOLDER_PCT:.0f}%"
-                )
-            else:
-                result.pass_reasons.append(f"Top 10 hold {top10_pct:.0f}%")
+            result.top10_holder_pct = total_pct
     else:
-        result.pass_reasons.append("Rugcheck unavailable (assuming safe)")
+        result.fail_reasons.append("Rugcheck data unavailable")
 
-    # ── Helius holder enrichment (optional) ──────────────────────────────
-    if result.holder_count < MIN_HOLDER_COUNT:
-        holders = _check_helius_holders(mint_address)
-        if holders and holders.get("value"):
-            result.holder_count = max(result.holder_count, len(holders["value"]))
+    # ── 6. Top holders via Helius (primary or backup) ────────────────────
+    helius_holders = _check_helius_holders(mint_address)
 
-    if result.holder_count < MIN_HOLDER_COUNT:
+    if helius_holders:
+        # If rugcheck didn't provide top-10 concentration, compute from Helius
+        if result.top10_holder_pct == 0.0:
+            total_supply = sum(
+                _safe_float(h, "uiAmount") for h in helius_holders
+            )
+            if total_supply > 0:
+                top10_supply = sum(
+                    _safe_float(h, "uiAmount") for h in helius_holders[:10]
+                )
+                result.top10_holder_pct = (top10_supply / total_supply) * 100.0
+
+        # ── 7. Backup holder count from Helius if rugcheck was low ────
+        if result.holder_count < MIN_HOLDER_COUNT:
+            helius_count = len(helius_holders)
+            if helius_count > result.holder_count:
+                result.holder_count = helius_count
+
+    # Holder count threshold check
+    if result.holder_count >= MIN_HOLDER_COUNT:
+        result.pass_reasons.append(
+            f"Holder count {result.holder_count} >= {MIN_HOLDER_COUNT}"
+        )
+    else:
         result.fail_reasons.append(
             f"Holder count {result.holder_count} < {MIN_HOLDER_COUNT}"
         )
 
-    # ── Final verdict ────────────────────────────────────────────────────
-    # Only hard-fail on confirmed dangerous rug score.
-    # Mint/freeze authority are warnings (very common on Solana memecoins)
-    # and reduce the confidence score instead of blocking.
-    hard_fail = result.rug_risk_level == "danger"
+    # Top-10 concentration check
+    if result.top10_holder_pct > 0:
+        if result.top10_holder_pct <= MAX_TOP10_HOLDER_PCT:
+            result.pass_reasons.append(
+                f"Top-10 holders own {result.top10_holder_pct:.1f}% <= {MAX_TOP10_HOLDER_PCT}%"
+            )
+        else:
+            result.fail_reasons.append(
+                f"Top-10 holders own {result.top10_holder_pct:.1f}% > {MAX_TOP10_HOLDER_PCT}%"
+            )
 
-    critical_fails = sum(
-        1 for r in result.fail_reasons
-        if any(x in r for x in ["24h vol", "Liq $", "Age "])
-    )
+    # ── 8. Final verdict ─────────────────────────────────────────────────
+    # Hard fail: rug risk level is "danger"
+    if result.rug_risk_level == "danger":
+        result.passed = False
+        return result
 
-    result.passed = not hard_fail and critical_fails <= 1
+    # Mint/freeze authority are soft warnings — do NOT count them as
+    # critical fails.  Only volume/liquidity/age/holder thresholds counted.
+    # Allow up to 1 critical fail.
+    if critical_fails <= 1:
+        result.passed = True
+    else:
+        result.passed = False
+
     return result
