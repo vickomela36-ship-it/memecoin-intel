@@ -23,7 +23,7 @@ from config import (
 # Data Fetching
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_coingecko_ohlc(coin_id, days=90):
+def _fetch_coingecko_ohlc(coin_id, days=30):
     try:
         url = f"{COINGECKO_API}/coins/{coin_id}/ohlc"
         resp = requests.get(url, params={"vs_currency": "usd", "days": days}, timeout=15)
@@ -97,12 +97,17 @@ def _compute_sma(closes, period):
 
 
 def _compute_volatility(closes, period=30):
-    if len(closes) < period + 1:
-        return 0.0
-    returns = [(closes[i] / closes[i - 1]) - 1.0 for i in range(-period, 0)]
+    usable = min(period, len(closes) - 1)
+    if usable < 3:
+        return 0.02
+    returns = [(closes[i] / closes[i - 1]) - 1.0
+               for i in range(-usable, 0) if closes[i - 1] != 0]
+    if not returns:
+        return 0.02
     mean_ret = sum(returns) / len(returns)
     variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
-    return math.sqrt(variance)
+    vol = math.sqrt(variance)
+    return max(vol, 0.005)
 
 
 def _find_support_resistance(ohlcv):
@@ -181,7 +186,7 @@ def _build_forecast(asset, config):
 
     # Fetch data in parallel
     with ThreadPoolExecutor(max_workers=4) as executor:
-        f_ohlc = executor.submit(_fetch_coingecko_ohlc, coin_id, 90)
+        f_ohlc = executor.submit(_fetch_coingecko_ohlc, coin_id, 30)
         f_price = executor.submit(_fetch_coingecko_price, coin_id)
         f_fg = executor.submit(_fetch_fear_greed)
         f_fund = executor.submit(_fetch_funding_rate, binance_symbol)
@@ -211,7 +216,9 @@ def _build_forecast(asset, config):
     rsi = _compute_rsi(closes)
     sma_20 = _compute_sma(closes, 20) or current_price
     sma_50 = _compute_sma(closes, 50) or current_price
-    daily_vol = _compute_volatility(closes, 30)
+    # CoinGecko 30-day returns 4h candles (6 per day); scale vol to daily
+    candle_vol = _compute_volatility(closes, min(60, len(closes) - 1))
+    daily_vol = candle_vol * math.sqrt(6)
     support, resistance = _find_support_resistance(ohlcv)
     support = support or current_price * 0.9
     resistance = resistance or current_price * 1.1
