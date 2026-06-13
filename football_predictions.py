@@ -310,6 +310,8 @@ def _find_value_bets(home_prob, draw_prob, away_prob, bookmaker_odds):
 
 def _normalize_team_name(name):
     """Normalize a team name for fuzzy comparison."""
+    if not name:
+        return ""
     canonical = TEAM_ALIASES.get(name, name)
     return canonical.lower().strip()
 
