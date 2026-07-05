@@ -1336,7 +1336,7 @@ if page == "Memecoin Scanner":
             s7.metric("Degen", stats.get("degen_plays", 0))
             s8.metric("New", stats.get("new_launches", 0))
 
-        HIGH_CAP_FDV = 10_000_000
+        HIGH_CAP_FDV = 5_000_000
 
         if results or degen_results or new_gems:
             low_cap = [r for r in results if r["fdv"] < HIGH_CAP_FDV]
@@ -1377,7 +1377,7 @@ if page == "Memecoin Scanner":
 
             # ── Section 2: Higher-cap recovery (safer swings) ───────────
             st.markdown(
-                f"## HIGHER-CAP RECOVERY — $10M+ FDV ({len(high_cap)})")
+                f"## HIGHER-CAP RECOVERY — $5M+ FDV ({len(high_cap)})")
             st.caption(
                 "Established tokens in a dip with buy-side sentiment intact "
                 "and a TA setup. Slower movers, higher survival rate — "
@@ -1388,7 +1388,7 @@ if page == "Memecoin Scanner":
             else:
                 st.info(
                     "No higher-cap recovery setups this scan — "
-                    "either no $10M+ dips or sentiment is still sell-side.")
+                    "either no $5M+ dips or sentiment is still sell-side.")
 
             st.divider()
 
