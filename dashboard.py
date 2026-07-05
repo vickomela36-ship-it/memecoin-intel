@@ -40,6 +40,11 @@ from crypto_predictions import (
 from football_predictions import (
     get_match_predictions, get_available_competitions, MatchPrediction,
 )
+from challenge_tracker import (
+    load_challenge, save_challenge, start_challenge, log_challenge_trade,
+    days_elapsed, pace_status, pace_bankroll, required_daily_multiple,
+    position_plan, daily_play_plan, SIZING_RULES,
+)
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN = "#00e676"
@@ -79,6 +84,57 @@ def _load_json(path):
 def _save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+# ── Market regime ────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300)
+def fetch_market_regime():
+    """SOL/BTC 24h trend → RISK-ON / CAUTION / RISK-OFF gate for degen plays."""
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin,solana", "vs_currencies": "usd",
+                    "include_24hr_change": "true"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        btc_chg = data.get("bitcoin", {}).get("usd_24h_change", 0) or 0
+        sol_chg = data.get("solana", {}).get("usd_24h_change", 0) or 0
+    except Exception:
+        return {"regime": "UNKNOWN", "btc": 0.0, "sol": 0.0}
+
+    if sol_chg < -5 or btc_chg < -4:
+        regime = "RISK-OFF"
+    elif sol_chg < -2 or btc_chg < -2:
+        regime = "CAUTION"
+    else:
+        regime = "RISK-ON"
+    return {"regime": regime, "btc": round(btc_chg, 1), "sol": round(sol_chg, 1)}
+
+
+def render_regime_banner():
+    reg = fetch_market_regime()
+    colors = {"RISK-ON": GREEN, "CAUTION": YELLOW, "RISK-OFF": RED,
+              "UNKNOWN": GREY}
+    clr = colors.get(reg["regime"], GREY)
+    notes = {
+        "RISK-ON": "Market healthy — degen plays are in season.",
+        "CAUTION": "Majors slipping — halve position sizes, tighten stops.",
+        "RISK-OFF": "Market bleeding — memecoins bleed harder. Core plays only, or sit out.",
+        "UNKNOWN": "Could not fetch market data — trade as if CAUTION.",
+    }
+    st.markdown(
+        f"<div style='padding:8px 14px;border-radius:8px;border:1px solid {clr};"
+        f"background:{clr}15;margin-bottom:10px'>"
+        f"<b style='color:{clr}'>MARKET: {reg['regime']}</b>"
+        f"<span style='color:#aaa;margin-left:10px'>BTC {reg['btc']:+.1f}% · "
+        f"SOL {reg['sol']:+.1f}% (24h)</span>"
+        f"<br><span style='color:#ccc;font-size:13px'>{notes[reg['regime']]}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    return reg
 
 
 # ── DexScreener helpers ──────────────────────────────────────────────────────
@@ -437,17 +493,25 @@ def run_full_scan():
         if not best:
             continue
 
+        m5 = _safe_float(best, "priceChange", "m5")
         h1 = _safe_float(best, "priceChange", "h1")
         h6 = _safe_float(best, "priceChange", "h6")
         h24 = _safe_float(best, "priceChange", "h24")
         vol_24h = _safe_float(best, "volume", "h24")
+        vol_h1 = _safe_float(best, "volume", "h1")
         liq = _safe_float(best, "liquidity", "usd")
 
-        has_dip = h6 < -5 or h24 < -8
         has_volume = vol_24h > 30_000
+        has_dip = h6 < -5 or h24 < -8
+        # Momentum setup: already running with volume accelerating —
+        # in a compounding challenge you ride these, not just dips.
+        vol_accelerating = vol_h1 > 0 and (vol_h1 * 24) > vol_24h * 1.5
+        has_momentum = h1 > 10 and m5 > -2 and vol_accelerating
 
-        if not (has_dip and has_volume):
+        if not has_volume or not (has_dip or has_momentum):
             continue
+
+        setup_type = "DIP RECOVERY" if has_dip else "MOMENTUM"
 
         base = best.get("baseToken") or {}
         candidates.append({
@@ -456,7 +520,8 @@ def run_full_scan():
             "name": base.get("name", "?"),
             "pair_data": best,
             "boosts": boosts_map.get(addr, 0),
-            "h1": h1, "h6": h6, "h24": h24,
+            "setup_type": setup_type,
+            "m5": m5, "h1": h1, "h6": h6, "h24": h24,
             "price_usd": _safe_float(best, "priceUsd"),
             "fdv": _safe_float(best, "fdv"),
             "vol_5m": _safe_float(best, "volume", "m5"),
@@ -552,10 +617,12 @@ def run_full_scan():
             c["price_usd"], c["fdv"], c["h1"], c["h6"], c["h24"],
             c["vol_5m"], c["vol_h1"], c["vol_24h"], c["liquidity"],
             c["txns"], c["ta"], c["safety"],
+            m5=c.get("m5", 0.0),
         )
 
         entry = {
             "address": c["address"], "symbol": c["symbol"], "name": c["name"],
+            "setup_type": c.get("setup_type", "DIP RECOVERY"),
             "price_usd": c["price_usd"], "fdv": c["fdv"],
             "h1": c["h1"], "h6": c["h6"], "h24": c["h24"],
             "vol_5m": c["vol_5m"], "vol_h1": c["vol_h1"],
@@ -581,6 +648,7 @@ def run_full_scan():
             c["price_usd"], c["fdv"], c["h1"], c["h6"], c["h24"],
             c["vol_5m"], c["vol_h1"], c["vol_24h"], c["liquidity"],
             c["txns"], c["ta"], c["safety"],
+            m5=c.get("m5", 0.0),
         )
 
         if moon.total >= 40:
@@ -590,6 +658,7 @@ def run_full_scan():
             )
             degen_results.append({
                 "address": c["address"], "symbol": c["symbol"], "name": c["name"],
+                "setup_type": c.get("setup_type", "DIP RECOVERY"),
                 "price_usd": c["price_usd"], "fdv": c["fdv"],
                 "h1": c["h1"], "h6": c["h6"], "h24": c["h24"],
                 "vol_5m": c["vol_5m"], "vol_h1": c["vol_h1"],
@@ -798,10 +867,14 @@ def _render_degen_card(r):
             f"{moon.multiplier_target}</span> "
             f"**{r['symbol']}** · {r['name'][:25]}",
             unsafe_allow_html=True)
+        setup = r.get("setup_type", "DIP RECOVERY")
+        setup_clr = BLUE if setup == "DIP RECOVERY" else ORANGE
         st.markdown(
             f"<span class='signal-tag' style='background:{r_clr}20;"
             f"color:{r_clr};border:1px solid {r_clr}'>"
-            f"RISK: {moon.risk_level}</span>",
+            f"RISK: {moon.risk_level}</span> "
+            f"<span class='signal-tag' style='background:{setup_clr}20;"
+            f"color:{setup_clr};border:1px solid {setup_clr}'>{setup}</span>",
             unsafe_allow_html=True)
         st.caption(f"`{r['address'][:28]}...`")
 
@@ -848,6 +921,23 @@ def _render_degen_card(r):
             if r.get("pair_url"):
                 st.link_button("DexScreener", r["pair_url"],
                                use_container_width=True)
+
+    # Trade plan sized from the live challenge bankroll
+    ch = load_challenge()
+    bankroll = ch.current_bankroll if ch.active else 100.0
+    plan = position_plan(bankroll, moon.tier, r["price_usd"])
+    st.markdown(
+        f"<div style='padding:8px 12px;border-radius:6px;background:#1a1a2e;"
+        f"border-left:3px solid {m_clr};margin:4px 0'>"
+        f"<b>TRADE PLAN</b> (bankroll ${bankroll:,.0f}): "
+        f"Buy <b>${plan['size_usd']:,.2f}</b> ({plan['fraction_pct']:.0f}%) · "
+        f"Stop <b>-{plan['stop_pct']}%</b> (max loss ${plan['max_loss_usd']:,.2f}) · "
+        f"{plan['tp1_sell']} at <b>{plan['tp1_mult']}x</b> · "
+        f"{plan['tp2_sell']} at <b>{plan['tp2_mult']}x</b> · {plan['moonbag']}"
+        f"<br><span style='color:#888;font-size:12px'>{plan['why']}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     with st.expander(f"Degen Analysis: {r['symbol']}"):
         d1, d2, d3 = st.columns(3)
@@ -1061,7 +1151,7 @@ st.markdown(
 # ── Sidebar navigation ──────────────────────────────────────────────────────
 page = st.sidebar.radio(
     "Navigate",
-    ["Memecoin Scanner", "Crypto Predictions", "Football Picks"],
+    ["Memecoin Scanner", "Challenge Tracker", "Crypto Predictions", "Football Picks"],
     index=0,
 )
 st.sidebar.markdown("---")
@@ -1078,6 +1168,7 @@ if page == "Memecoin Scanner":
     st.caption(
         "DexScreener discovery → Rugcheck safety → Birdeye TA → Confidence scoring"
     )
+    render_regime_banner()
 
     tab_scanner, tab_watchlist, tab_tradelog, tab_scoreboard = st.tabs(
         ["Scanner", "Watchlist", "Trade Log", "Signal Scoreboard"]
@@ -1411,6 +1502,142 @@ if page == "Memecoin Scanner":
                 st.rerun()
         else:
             st.info("No degen plays recorded yet.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: CHALLENGE TRACKER ($100 → $10,000)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "Challenge Tracker":
+    st.markdown("# Challenge HQ — $100 → $10,000")
+    regime = render_regime_banner()
+
+    ch = load_challenge()
+
+    if not ch.active:
+        st.info(
+            "**No active challenge.** Set your starting bankroll and target, "
+            "then hit Start. Every scanner card will size trades off your live bankroll."
+        )
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            start_amt = st.number_input("Starting bankroll ($)", value=100.0,
+                                        min_value=10.0, step=10.0)
+        with sc2:
+            target_amt = st.number_input("Target ($)", value=10_000.0,
+                                         min_value=100.0, step=500.0)
+        with sc3:
+            n_days = st.number_input("Days", value=7, min_value=1,
+                                     max_value=90, step=1)
+        if st.button("Start Challenge", type="primary", use_container_width=True):
+            start_challenge(start_amt, target_amt, int(n_days))
+            st.rerun()
+    else:
+        elapsed = days_elapsed(ch)
+        days_left = max(0.0, ch.days - elapsed)
+        status, on_pace, req_mult = pace_status(ch)
+        progress_mult = ch.current_bankroll / ch.start_bankroll
+
+        status_clr = {"TARGET HIT": GREEN, "AHEAD OF PACE": GREEN,
+                      "BEHIND PACE": YELLOW, "CRITICAL": RED}.get(status, GREY)
+
+        st.markdown(
+            f"<div style='padding:14px 18px;border-radius:8px;"
+            f"border:2px solid {status_clr};background:{status_clr}12'>"
+            f"<span style='font-size:26px;font-weight:900'>"
+            f"${ch.current_bankroll:,.2f}</span>"
+            f"<span style='color:#aaa;margin-left:8px'>of ${ch.target:,.0f} target</span>"
+            f"<span style='float:right;color:{status_clr};font-weight:800;"
+            f"font-size:18px'>{status}</span>"
+            f"<br><span style='color:#ccc'>{progress_mult:.2f}x so far · "
+            f"Day {elapsed:.1f} of {ch.days} · "
+            f"on-pace bankroll: ${on_pace:,.0f}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Progress vs pace
+        pct = min(1.0, ch.current_bankroll / ch.target)
+        st.progress(pct)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Needed per day", f"{req_mult:.2f}x" if req_mult != float("inf") else "—")
+        m2.metric("Days left", f"{days_left:.1f}")
+        m3.metric("Trades logged", len(ch.trades))
+        wins = sum(1 for t in ch.trades if t["pnl"] > 0)
+        m4.metric("Win rate", f"{wins}/{len(ch.trades)}" if ch.trades else "—")
+
+        st.divider()
+
+        # ── Today's play structure ──────────────────────────────────────
+        st.markdown("### Today's Play Structure")
+        st.caption(
+            f"To sustain {req_mult:.2f}x/day: run the core play every day, "
+            "add degen shots only on RISK-ON. Never all-in — one rug ends the run."
+        )
+        plays, reserve = daily_play_plan(ch.current_bankroll, req_mult)
+        pc_cols = st.columns(len(plays))
+        for i, p in enumerate(plays):
+            with pc_cols[i]:
+                st.markdown(
+                    f"<div style='padding:12px;border-radius:8px;background:#1a1a2e;"
+                    f"border:1px solid {BLUE}40'>"
+                    f"<b>{p['slot']}</b><br>"
+                    f"<span style='font-size:20px;font-weight:800;color:{GREEN}'>"
+                    f"${p['size_usd']:,.2f}</span> "
+                    f"<span style='color:#aaa'>({p['fraction_pct']:.0f}%)</span><br>"
+                    f"<span style='color:#ccc;font-size:13px'>"
+                    f"Stop -{p['stop_pct']}% · TP {p['tp1_mult']}x / {p['tp2_mult']}x"
+                    f"</span><br>"
+                    f"<span style='color:#888;font-size:12px'>{p['why']}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        st.caption(f"Cash reserve: {reserve:.0f}% — never deploy it all at once.")
+
+        if regime["regime"] == "RISK-OFF":
+            st.warning("Market is RISK-OFF — skip degen shots today. "
+                       "Capital preserved is capital compounded tomorrow.")
+
+        st.divider()
+
+        # ── Log a trade ──────────────────────────────────────────────────
+        st.markdown("### Log a Completed Trade")
+        lt1, lt2, lt3, lt4 = st.columns([2, 2, 2, 2])
+        with lt1:
+            t_symbol = st.text_input("Token symbol", key="ch_sym")
+        with lt2:
+            t_in = st.number_input("$ in", min_value=0.0, step=5.0, key="ch_in")
+        with lt3:
+            t_out = st.number_input("$ out", min_value=0.0, step=5.0, key="ch_out")
+        with lt4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Log Trade", use_container_width=True):
+                if t_symbol and t_in > 0:
+                    log_challenge_trade(ch, t_symbol, t_in, t_out)
+                    st.rerun()
+                else:
+                    st.error("Need a symbol and a $ in amount.")
+
+        if ch.trades:
+            st.markdown("### Trade History")
+            rows = [{
+                "Token": t["symbol"],
+                "In": f"${t['entry_usd']:,.2f}",
+                "Out": f"${t['exit_usd']:,.2f}",
+                "PnL": f"${t['pnl']:+,.2f}",
+                "Multiple": f"{t['multiple']:.2f}x",
+                "Bankroll": f"${t['bankroll_after']:,.2f}",
+                "When": t["at"][:16],
+            } for t in reversed(ch.trades)]
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+        st.divider()
+        rc1, rc2 = st.columns([3, 1])
+        with rc2:
+            if st.button("Reset Challenge", use_container_width=True):
+                ch.active = False
+                save_challenge(ch)
+                st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

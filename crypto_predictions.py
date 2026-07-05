@@ -285,8 +285,12 @@ def _build_forecast(asset, config):
     # ── Time-based price predictions (2h, 18h, 24h) ───────────────────
     # Hourly vol from daily vol (assuming ~24 trading hours)
     hourly_vol = daily_vol / math.sqrt(24)
-    # Drift = directional bias scaled by score strength (max ~100)
-    drift_per_hour = (score / 100.0) * hourly_vol * 0.3
+    # Drift blends two signals:
+    #   1. signal score bias (RSI/MA/funding/sentiment composite)
+    #   2. momentum carry — 25% of the last 24h move tends to persist
+    signal_drift = (score / 100.0) * hourly_vol * 0.5
+    momentum_carry = (change_24h / 100.0) / 24.0 * 0.25
+    drift_per_hour = signal_drift + momentum_carry
 
     time_predictions = []
     for hours in [2, 18, 24]:

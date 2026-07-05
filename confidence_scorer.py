@@ -612,7 +612,8 @@ def compute_moonshot(price_usd: float, fdv: float,
                      h1: float, h6: float, h24: float,
                      vol_5m: float, vol_h1: float, vol_24h: float,
                      liquidity: float, txns: dict,
-                     ta_result, safety_result) -> MoonshotScore:
+                     ta_result, safety_result,
+                     m5: float = 0.0) -> MoonshotScore:
     """Inverted scoring for degen plays: deeper dips, lower mcap, and
     higher volatility produce higher moonshot scores.
 
@@ -686,30 +687,39 @@ def compute_moonshot(price_usd: float, fdv: float,
     else:
         ms.mcap_score = 10
 
-    # ── 3. Volume spike (20% weight) ────────────────────────────────────
-    hourly_rate = vol_h1 * 24 if vol_h1 > 0 else 0
-    if vol_24h > 0 and hourly_rate > 0:
-        vol_ratio = hourly_rate / vol_24h
-        if vol_ratio >= 5.0:
-            ms.volume_spike_score = 100
-            ms.reasons.append(f"Volume spike {vol_ratio:.1f}x hourly vs 24h avg")
-        elif vol_ratio >= 3.0:
-            ms.volume_spike_score = 80
-            ms.reasons.append(f"Volume surge {vol_ratio:.1f}x")
-        elif vol_ratio >= 2.0:
-            ms.volume_spike_score = 60
-        elif vol_ratio >= 1.5:
-            ms.volume_spike_score = 40
-        else:
-            ms.volume_spike_score = 20
-    elif vol_5m > 0:
-        # Fallback: project 5m volume to hourly
-        projected = vol_5m * 12
-        if vol_24h > 0:
-            ratio = (projected * 24) / vol_24h
-            ms.volume_spike_score = _clamp(ratio * 20)
-        else:
-            ms.volume_spike_score = 30
+    # ── 3. Volume acceleration (20% weight) ─────────────────────────────
+    # Two lenses: hourly rate vs 24h avg (sustained), and 5m rate vs
+    # hourly rate (accelerating RIGHT NOW — the one that front-runs pumps).
+    hourly_ratio = 0.0
+    instant_ratio = 0.0
+    if vol_24h > 0 and vol_h1 > 0:
+        hourly_ratio = (vol_h1 * 24) / vol_24h
+    if vol_h1 > 0 and vol_5m > 0:
+        instant_ratio = (vol_5m * 12) / vol_h1
+
+    if instant_ratio >= 3.0 and vol_5m > 1_000:
+        ms.volume_spike_score = 100
+        ms.reasons.append(
+            f"Volume accelerating NOW: 5m pace {instant_ratio:.1f}x the hourly rate"
+        )
+    elif hourly_ratio >= 5.0:
+        ms.volume_spike_score = 95
+        ms.reasons.append(f"Volume spike {hourly_ratio:.1f}x hourly vs 24h avg")
+    elif instant_ratio >= 2.0 and vol_5m > 500:
+        ms.volume_spike_score = 85
+        ms.reasons.append(f"Fresh volume pickup ({instant_ratio:.1f}x 5m acceleration)")
+    elif hourly_ratio >= 3.0:
+        ms.volume_spike_score = 80
+        ms.reasons.append(f"Volume surge {hourly_ratio:.1f}x")
+    elif hourly_ratio >= 2.0:
+        ms.volume_spike_score = 60
+    elif hourly_ratio >= 1.5:
+        ms.volume_spike_score = 40
+    elif hourly_ratio > 0 or instant_ratio > 0:
+        ms.volume_spike_score = 20
+    elif vol_5m > 0 and vol_24h > 0:
+        ratio = (vol_5m * 288) / vol_24h
+        ms.volume_spike_score = _clamp(ratio * 20)
     else:
         ms.volume_spike_score = 5
 
@@ -731,14 +741,22 @@ def compute_moonshot(price_usd: float, fdv: float,
     momentum_signal = getattr(ta_result, "momentum_signal", "") if ta_result else ""
     signal_upper = str(momentum_signal).upper()
 
+    # 5m green while the larger frame is red = recovery igniting right now.
+    fresh_recovery = m5 > 2 and (h6 < -15 or h24 < -25)
+
     if "STRONG_REVERSAL" in signal_upper:
         ms.momentum_score = 90
         ms.reasons.append("TA shows strong reversal signal")
+    elif fresh_recovery:
+        ms.momentum_score = 85
+        ms.reasons.append(
+            f"Recovery igniting: 5m +{m5:.1f}% against {h6:.1f}% 6h dump"
+        )
     elif "WEAK_REVERSAL" in signal_upper:
         ms.momentum_score = 60
     elif "BULLISH" in signal_upper:
         ms.momentum_score = 70
-    elif momentum_signal:
+    elif momentum_signal and not fresh_recovery:
         ms.momentum_score = 30
     else:
         # Fallback: h1 positive while h6/h24 deep negative = momentum shift
@@ -788,6 +806,19 @@ def compute_moonshot(price_usd: float, fdv: float,
         + ms.momentum_score * 0.10
         + ms.buy_pressure_score * 0.05
     )
+
+    # ── Liquidity/FDV sanity adjustment ─────────────────────────────────
+    # Healthy micro-caps run 5-20% liq/FDV. Under 2% you can't exit a win.
+    if fdv > 0 and liquidity > 0:
+        liq_ratio = liquidity / fdv
+        if liq_ratio < 0.02:
+            ms.total = _clamp(ms.total - 15)
+            ms.warnings.append(
+                f"Exit trap risk: liquidity is only {liq_ratio:.1%} of FDV"
+            )
+        elif liq_ratio >= 0.08:
+            ms.total = _clamp(ms.total + 5)
+            ms.reasons.append(f"Healthy liquidity ({liq_ratio:.0%} of FDV)")
 
     # ── Tier assignment ─────────────────────────────────────────────────
     if ms.total >= 80 and fdv < 500_000:
