@@ -70,6 +70,26 @@ class MoonshotScore:
             self.warnings = []
 
 
+@dataclass
+class NewGemScore:
+    total: float = 0.0
+    tier: str = "PASS"
+    age_score: float = 0.0
+    volume_growth_score: float = 0.0
+    sentiment_score: float = 0.0
+    price_action_score: float = 0.0
+    liquidity_score: float = 0.0
+    age_hours: float = 0.0
+    reasons: list = None
+    warnings: list = None
+
+    def __post_init__(self):
+        if self.reasons is None:
+            self.reasons = []
+        if self.warnings is None:
+            self.warnings = []
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -869,3 +889,144 @@ def compute_moonshot(price_usd: float, fdv: float,
         ms.warnings.append(f"Low 24h volume ${vol_24h:,.0f}")
 
     return ms
+
+
+# =============================================================================
+# New-token gem scoring (fresh launches with volume + sentiment building)
+# =============================================================================
+
+def compute_new_gem(age_hours: float, m5: float, h1: float, h24: float,
+                    vol_5m: float, vol_h1: float, vol_24h: float,
+                    liquidity: float, fdv: float,
+                    txns: dict, boosts: int = 0) -> NewGemScore:
+    """Score a freshly-launched token on volume growth and sentiment.
+
+    Weights: volume growth 30%, sentiment 25%, age 20%,
+    price action 15%, liquidity 10%.
+    """
+    gs = NewGemScore(age_hours=round(age_hours, 1))
+
+    # ── 1. Age sweet spot (20%) ─────────────────────────────────────────
+    if age_hours < 1:
+        gs.age_score = 35
+        gs.warnings.append("Under 1h old — peak rug window, wait for a candle")
+    elif age_hours < 6:
+        gs.age_score = 85
+        gs.reasons.append(f"Fresh launch ({age_hours:.1f}h old)")
+    elif age_hours < 24:
+        gs.age_score = 100
+        gs.reasons.append(f"Prime window ({age_hours:.0f}h old) — survived launch chaos")
+    elif age_hours < 48:
+        gs.age_score = 85
+    elif age_hours <= 72:
+        gs.age_score = 65
+    else:
+        gs.age_score = 0  # not "new" anymore
+
+    # ── 2. Volume growth (30%) ──────────────────────────────────────────
+    instant_ratio = (vol_5m * 12) / vol_h1 if vol_h1 > 0 else 0.0
+    hourly_ratio = (vol_h1 * 24) / vol_24h if vol_24h > 0 else 0.0
+
+    if instant_ratio >= 2.0 and vol_5m > 500:
+        gs.volume_growth_score = 100
+        gs.reasons.append(f"Volume ramping NOW ({instant_ratio:.1f}x 5m acceleration)")
+    elif instant_ratio >= 1.3 and vol_5m > 250:
+        gs.volume_growth_score = 80
+        gs.reasons.append(f"Volume building ({instant_ratio:.1f}x)")
+    elif hourly_ratio >= 2.0:
+        gs.volume_growth_score = 70
+        gs.reasons.append(f"Hourly volume {hourly_ratio:.1f}x the 24h average")
+    elif instant_ratio >= 0.8:
+        gs.volume_growth_score = 50
+    else:
+        gs.volume_growth_score = 25
+
+    # ── 3. Sentiment / buy pressure (25%) ───────────────────────────────
+    best_ratio = 0.0
+    total_buys = 0
+    if txns and isinstance(txns, dict):
+        for tf in ("m5", "h1"):
+            tf_data = txns.get(tf, {})
+            if isinstance(tf_data, dict):
+                buys = float(tf_data.get("buys", 0))
+                sells = float(tf_data.get("sells", 0))
+                total_buys += buys
+                if sells > 0:
+                    best_ratio = max(best_ratio, buys / sells)
+                elif buys > 5:
+                    best_ratio = max(best_ratio, 3.0)
+
+    if best_ratio >= 2.5:
+        gs.sentiment_score = 100
+        gs.reasons.append(f"Heavy buy pressure ({best_ratio:.1f}x buys/sells)")
+    elif best_ratio >= 1.8:
+        gs.sentiment_score = 80
+        gs.reasons.append(f"Buyers in control ({best_ratio:.1f}x)")
+    elif best_ratio >= 1.3:
+        gs.sentiment_score = 60
+    elif best_ratio >= 1.0:
+        gs.sentiment_score = 40
+    else:
+        gs.sentiment_score = 15
+
+    try:
+        if int(boosts) > 0:
+            gs.sentiment_score = _clamp(gs.sentiment_score + 10)
+            gs.reasons.append(f"DexScreener boosted ({boosts})")
+    except (ValueError, TypeError):
+        pass
+
+    # ── 4. Price action (15%) ───────────────────────────────────────────
+    if m5 > 0 and h1 > 15:
+        gs.price_action_score = 90
+        gs.reasons.append(f"Trending up: 1h +{h1:.0f}%, still green on 5m")
+    elif m5 > 0 and h1 > 0:
+        gs.price_action_score = 70
+    elif h1 > 0:
+        gs.price_action_score = 60
+    elif m5 > 0:
+        gs.price_action_score = 45
+    else:
+        gs.price_action_score = 20
+
+    # ── 5. Liquidity floor (10%) ────────────────────────────────────────
+    if liquidity >= 50_000:
+        gs.liquidity_score = 90
+    elif liquidity >= 20_000:
+        gs.liquidity_score = 70
+    elif liquidity >= 10_000:
+        gs.liquidity_score = 50
+    elif liquidity >= 5_000:
+        gs.liquidity_score = 30
+        gs.warnings.append(f"Thin liquidity ${liquidity:,.0f} — slippage will hurt")
+    else:
+        gs.liquidity_score = 10
+        gs.warnings.append(f"Very thin liquidity ${liquidity:,.0f}")
+
+    # ── Weighted total ──────────────────────────────────────────────────
+    gs.total = _clamp(
+        gs.volume_growth_score * 0.30
+        + gs.sentiment_score * 0.25
+        + gs.age_score * 0.20
+        + gs.price_action_score * 0.15
+        + gs.liquidity_score * 0.10
+    )
+
+    # Exit-trap check
+    if fdv > 0 and liquidity > 0 and (liquidity / fdv) < 0.02:
+        gs.total = _clamp(gs.total - 15)
+        gs.warnings.append(
+            f"Exit trap risk: liquidity only {liquidity / fdv:.1%} of FDV"
+        )
+
+    # ── Tier ────────────────────────────────────────────────────────────
+    if gs.total >= 75:
+        gs.tier = "HOT LAUNCH"
+    elif gs.total >= 60:
+        gs.tier = "BUILDING"
+    elif gs.total >= 45:
+        gs.tier = "EARLY WATCH"
+    else:
+        gs.tier = "PASS"
+
+    return gs

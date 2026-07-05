@@ -31,7 +31,7 @@ from token_filter import check_token_safety, SafetyResult
 from technical_analysis import run_ta, TAResult
 from confidence_scorer import (
     compute_confidence, compute_entry_exit, compute_moonshot,
-    ConfidenceScore, MoonshotScore,
+    compute_new_gem, ConfidenceScore, MoonshotScore, NewGemScore,
 )
 from crypto_predictions import (
     get_all_predictions, get_prediction_history, log_prediction,
@@ -480,14 +480,16 @@ def run_full_scan():
 
     if not tokens:
         stage_text.error("No tokens found from DexScreener.")
-        return [], [], stats
+        return [], [], [], stats
 
     stage_text.markdown(f"**Stage 1/4:** Pre-filtering {len(tokens)} tokens...")
     addr_list = [tok["tokenAddress"] for tok in tokens]
     boosts_map = {tok["tokenAddress"]: tok.get("boosts", 0) for tok in tokens}
     all_pairs = fetch_pair_data_batch(addr_list)
 
+    now_ms = time.time() * 1000
     candidates = []
+    new_pool = []
     for addr, pairs in all_pairs.items():
         best = _best_solana_pair(pairs)
         if not best:
@@ -497,10 +499,38 @@ def run_full_scan():
         h1 = _safe_float(best, "priceChange", "h1")
         h6 = _safe_float(best, "priceChange", "h6")
         h24 = _safe_float(best, "priceChange", "h24")
+        vol_5m = _safe_float(best, "volume", "m5")
         vol_24h = _safe_float(best, "volume", "h24")
         vol_h1 = _safe_float(best, "volume", "h1")
         liq = _safe_float(best, "liquidity", "usd")
 
+        base = best.get("baseToken") or {}
+        entry_base = {
+            "address": addr,
+            "symbol": base.get("symbol", "?"),
+            "name": base.get("name", "?"),
+            "pair_data": best,
+            "boosts": boosts_map.get(addr, 0),
+            "m5": m5, "h1": h1, "h6": h6, "h24": h24,
+            "price_usd": _safe_float(best, "priceUsd"),
+            "fdv": _safe_float(best, "fdv"),
+            "vol_5m": vol_5m,
+            "vol_h1": vol_h1,
+            "vol_h6": _safe_float(best, "volume", "h6"),
+            "vol_24h": vol_24h,
+            "liquidity": liq,
+            "txns": best.get("txns") or {},
+            "pair_url": best.get("url", ""),
+        }
+
+        # ── New-launch pool: age <= 72h with volume + liquidity floor ──
+        created_ms = _safe_float(best, "pairCreatedAt")
+        if created_ms > 0:
+            age_hours = (now_ms - created_ms) / 3_600_000
+            if 0 < age_hours <= 72 and vol_h1 > 2_000 and liq > 5_000:
+                new_pool.append({**entry_base, "age_hours": age_hours})
+
+        # ── Swing recovery / momentum pool ──────────────────────────────
         has_volume = vol_24h > 30_000
         has_dip = h6 < -5 or h24 < -8
         # Momentum setup: already running with volume accelerating —
@@ -512,36 +542,34 @@ def run_full_scan():
             continue
 
         setup_type = "DIP RECOVERY" if has_dip else "MOMENTUM"
+        candidates.append({**entry_base, "setup_type": setup_type})
 
-        base = best.get("baseToken") or {}
-        candidates.append({
-            "address": addr,
-            "symbol": base.get("symbol", "?"),
-            "name": base.get("name", "?"),
-            "pair_data": best,
-            "boosts": boosts_map.get(addr, 0),
-            "setup_type": setup_type,
-            "m5": m5, "h1": h1, "h6": h6, "h24": h24,
-            "price_usd": _safe_float(best, "priceUsd"),
-            "fdv": _safe_float(best, "fdv"),
-            "vol_5m": _safe_float(best, "volume", "m5"),
-            "vol_h1": _safe_float(best, "volume", "h1"),
-            "vol_h6": _safe_float(best, "volume", "h6"),
-            "vol_24h": vol_24h,
-            "liquidity": liq,
-            "txns": best.get("txns") or {},
-            "pair_url": best.get("url", ""),
-        })
+    # Score new-launch pool (cheap, no API calls) and keep the finalists
+    for nt in new_pool:
+        nt["gem"] = compute_new_gem(
+            nt["age_hours"], nt["m5"], nt["h1"], nt["h24"],
+            nt["vol_5m"], nt["vol_h1"], nt["vol_24h"],
+            nt["liquidity"], nt["fdv"], nt["txns"], nt["boosts"],
+        )
+    new_pool = [nt for nt in new_pool if nt["gem"].total >= 45]
+    new_pool.sort(key=lambda nt: -nt["gem"].total)
+    new_finalists = new_pool[:12]
 
     stats["pre_filtered"] = len(candidates)
+    stats["new_launches"] = len(new_finalists)
 
-    if not candidates:
+    if not candidates and not new_finalists:
         stage_text.info("No tokens passed pre-filtering.")
-        return [], [], stats
+        return [], [], [], stats
 
     # ── Stage 2: Safety gate (parallel) ─────────────────────────────────
+    # Run candidates + new-launch finalists through safety in one pool.
+    cand_addrs = {c["address"] for c in candidates}
+    safety_pool = candidates + [nt for nt in new_finalists
+                                if nt["address"] not in cand_addrs]
+
     stage_text.markdown(
-        f"**Stage 2/4:** Safety checks on {len(candidates)} tokens..."
+        f"**Stage 2/4:** Safety checks on {len(safety_pool)} tokens..."
     )
     progress = st.progress(0)
     safe_tokens = []
@@ -551,20 +579,28 @@ def run_full_scan():
         return c, check_token_safety(c["address"], c["pair_data"])
 
     with ThreadPoolExecutor(max_workers=5) as ex:
-        futures = [ex.submit(_run_safety, c) for c in candidates]
+        futures = [ex.submit(_run_safety, c) for c in safety_pool]
         safety_results = []
         for fut in as_completed(futures):
             safety_results.append(fut.result())
-            progress.progress(len(safety_results) / len(candidates))
+            progress.progress(len(safety_results) / len(safety_pool))
 
+    safety_by_addr = {}
     for c, safety in safety_results:
         c["safety"] = safety
+        safety_by_addr[c["address"]] = safety
+        if c["address"] not in cand_addrs:
+            continue  # new-launch-only tokens don't join the swing pools
         if safety.passed:
             stats["safety_passed"] += 1
             safe_tokens.append(c)
         else:
             stats["safety_failed"] += 1
             risky_tokens.append(c)
+
+    # Attach safety to every new-launch finalist (some overlap candidates)
+    for nt in new_finalists:
+        nt["safety"] = safety_by_addr.get(nt["address"])
 
     progress.empty()
 
@@ -686,8 +722,19 @@ def run_full_scan():
             stats["grade_d"] += 1
 
     stats["degen_plays"] = len(degen_results)
+
+    # ── New-launch gems: drop hard safety failures, keep the rest ───────
+    new_gems = []
+    for nt in new_finalists:
+        safety = nt.get("safety")
+        # Danger-level rugs are excluded outright; soft warnings stay visible
+        if safety and not safety.passed:
+            nt["gem"].warnings.insert(0, "FAILED safety checks — degen only")
+        new_gems.append(nt)
+    new_gems.sort(key=lambda nt: -nt["gem"].total)
+
     stage_text.empty()
-    return results, degen_results, stats
+    return results, degen_results, new_gems, stats
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1005,6 +1052,80 @@ def _render_target_row(t, current_price):
     )
 
 
+GEM_COLORS = {
+    "HOT LAUNCH": PURPLE, "BUILDING": GREEN,
+    "EARLY WATCH": BLUE, "PASS": GREY,
+}
+
+
+def _render_gem_card(r):
+    gem = r["gem"]
+    g_clr = GEM_COLORS.get(gem.tier, GREY)
+    safety = r.get("safety")
+    safety_failed = safety is not None and not safety.passed
+
+    c1, c2, c3, c4 = st.columns([3, 2, 2, 4])
+
+    with c1:
+        st.markdown(
+            f"<span class='grade-badge' style='background:{g_clr}20;"
+            f"color:{g_clr};border:2px solid {g_clr}'>"
+            f"{gem.tier}</span> "
+            f"**{r['symbol']}** · {r['name'][:22]}",
+            unsafe_allow_html=True)
+        age_label = (f"{gem.age_hours:.1f}h" if gem.age_hours < 24
+                     else f"{gem.age_hours / 24:.1f}d")
+        st.caption(f"Age: {age_label} · `{r['address'][:20]}...`")
+
+    with c2:
+        st.metric("Price", fmt_price(r["price_usd"]))
+        st.caption(f"FDV: {fmt_usd(r['fdv'])} · Liq: {fmt_usd(r['liquidity'])}")
+
+    with c3:
+        st.metric(f"Gem Score {gem.total:.0f}/100", gem.tier)
+        m5c = "positive" if r["m5"] >= 0 else "negative"
+        h1c = "positive" if r["h1"] >= 0 else "negative"
+        st.markdown(
+            f"5m: <b class='{m5c}'>{r['m5']:+.1f}%</b> · "
+            f"1h: <b class='{h1c}'>{r['h1']:+.1f}%</b>",
+            unsafe_allow_html=True)
+
+    with c4:
+        if gem.reasons:
+            st.markdown("**Why:** " + " · ".join(gem.reasons[:3]))
+        warn_list = list(gem.warnings)
+        if safety_failed:
+            pass  # already prepended in scan
+        if warn_list:
+            st.markdown(
+                f"<span style='color:{RED}'>⚠ "
+                + " · ".join(warn_list[:2]) + "</span>",
+                unsafe_allow_html=True)
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("Add to Watchlist", key=f"gem_{r['address']}",
+                         use_container_width=True):
+                wl = _load_json(WATCHLIST_FILE)
+                if not any(w["address"] == r["address"] for w in wl):
+                    wl.append({
+                        "address": r["address"], "symbol": r["symbol"],
+                        "name": r["name"], "entry_price": r["price_usd"],
+                        "target_2x": r["price_usd"] * 2,
+                        "grade": f"GEM-{gem.tier}",
+                        "confidence": gem.total, "pair_url": r["pair_url"],
+                        "added_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    _save_json(WATCHLIST_FILE, wl)
+                    st.success(f"Added {r['symbol']}")
+                else:
+                    st.info("Already in watchlist")
+        with b2:
+            if r.get("pair_url"):
+                st.link_button("DexScreener", r["pair_url"],
+                               use_container_width=True)
+    st.divider()
+
+
 def _render_crypto_card(pred):
     dir_clr = GREEN if pred.direction == "BULLISH" else (
         RED if pred.direction == "BEARISH" else YELLOW)
@@ -1180,7 +1301,7 @@ if page == "Memecoin Scanner":
                                  use_container_width=True)
 
         if scan_clicked:
-            results, degen_results, stats = run_full_scan()
+            results, degen_results, new_gems, stats = run_full_scan()
             _, sig_added = log_signals(results)
             _, degen_added = log_degen_signals(degen_results)
             if sig_added or degen_added:
@@ -1193,17 +1314,19 @@ if page == "Memecoin Scanner":
 
             st.session_state["scan_results"] = results
             st.session_state["degen_results"] = degen_results
+            st.session_state["new_gems"] = new_gems
             st.session_state["scan_stats"] = stats
             st.session_state["scan_time"] = datetime.now(timezone.utc).strftime(
                 "%H:%M:%S UTC")
 
         results = st.session_state.get("scan_results", [])
         degen_results = st.session_state.get("degen_results", [])
+        new_gems = st.session_state.get("new_gems", [])
         stats = st.session_state.get("scan_stats", {})
         scan_time = st.session_state.get("scan_time", "")
 
         if stats:
-            s1, s2, s3, s4, s5, s6, s7 = st.columns(7)
+            s1, s2, s3, s4, s5, s6, s7, s8 = st.columns(8)
             s1.metric("Discovered", stats.get("discovered", 0))
             s2.metric("Pre-filtered", stats.get("pre_filtered", 0))
             s3.metric("Safety OK", stats.get("safety_passed", 0))
@@ -1211,36 +1334,79 @@ if page == "Memecoin Scanner":
             s5.metric("Grade A", stats.get("grade_a", 0))
             s6.metric("Grade B", stats.get("grade_b", 0))
             s7.metric("Degen", stats.get("degen_plays", 0))
+            s8.metric("New", stats.get("new_launches", 0))
 
-        if results or degen_results:
-            grade_a = [r for r in results if r["grade"] == "A"]
-            grade_b = [r for r in results if r["grade"] == "B"]
-            grade_c = [r for r in results if r["grade"] == "C"]
+        HIGH_CAP_FDV = 10_000_000
 
+        if results or degen_results or new_gems:
+            low_cap = [r for r in results if r["fdv"] < HIGH_CAP_FDV]
+            # Higher-cap recovery needs the sentiment side confirmed
+            high_cap = [r for r in results
+                        if r["fdv"] >= HIGH_CAP_FDV
+                        and r["cs"].sentiment_score >= 40
+                        and r["grade"] in ("A", "B", "C")]
+
+            grade_a = [r for r in low_cap if r["grade"] == "A"]
+            grade_b = [r for r in low_cap if r["grade"] == "B"]
+            grade_c = [r for r in low_cap if r["grade"] == "C"]
+
+            # ── Section 1: Low-cap swing recovery (the original) ────────
             if grade_a:
-                st.markdown(f"## BUY NOW — A-Grade ({len(grade_a)})")
+                st.markdown(f"## BUY NOW — A-Grade Low Cap ({len(grade_a)})")
                 st.caption(f"Confidence {GRADE_A_MIN}+ | Scanned at {scan_time}")
                 for r in grade_a:
                     _render_token_card(r)
             else:
-                st.info(f"No A-grade tokens this scan ({scan_time}).")
+                st.info(f"No A-grade low-cap tokens this scan ({scan_time}).")
 
             st.divider()
 
             if grade_b:
-                st.markdown(f"## WATCH LIST — B-Grade ({len(grade_b)})")
+                st.markdown(f"## WATCH LIST — B-Grade Low Cap ({len(grade_b)})")
                 for r in grade_b:
                     _render_token_card(r)
             else:
-                st.info("No B-grade tokens this scan.")
+                st.info("No B-grade low-cap tokens this scan.")
 
             if grade_c:
-                with st.expander(f"C-Grade tokens ({len(grade_c)})"):
+                with st.expander(f"C-Grade low-cap tokens ({len(grade_c)})"):
                     for r in grade_c:
                         _render_token_card(r, compact=True)
 
             st.divider()
 
+            # ── Section 2: Higher-cap recovery (safer swings) ───────────
+            st.markdown(
+                f"## HIGHER-CAP RECOVERY — $10M+ FDV ({len(high_cap)})")
+            st.caption(
+                "Established tokens in a dip with buy-side sentiment intact "
+                "and a TA setup. Slower movers, higher survival rate — "
+                "core-play material.")
+            if high_cap:
+                for r in sorted(high_cap, key=lambda x: -x["confidence"])[:10]:
+                    _render_token_card(r)
+            else:
+                st.info(
+                    "No higher-cap recovery setups this scan — "
+                    "either no $10M+ dips or sentiment is still sell-side.")
+
+            st.divider()
+
+            # ── Section 3: New launches building volume ─────────────────
+            st.markdown(f"## NEW LAUNCHES — Volume Building ({len(new_gems)})")
+            st.caption(
+                "Tokens under 72h old with volume accelerating and buyers "
+                "in control. Earliest entries, fastest movers, thinnest data "
+                "— size like moonshots.")
+            if new_gems:
+                for r in new_gems:
+                    _render_gem_card(r)
+            else:
+                st.info("No new launches with building volume this scan.")
+
+            st.divider()
+
+            # ── Section 4: Degen plays ──────────────────────────────────
             if degen_results:
                 st.markdown(
                     f"## DEGEN PLAYS — High Risk / High Reward ({len(degen_results)})")
