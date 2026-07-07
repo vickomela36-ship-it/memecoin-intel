@@ -201,6 +201,18 @@ export default function SignalCard({
           >
             {watched === "added" ? "✓ Watching" : watched === "dup" ? "Already watching" : "+ Watch"}
           </button>
+          <a
+            href={`https://jup.ag/swap/SOL-${signal.address}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-mono-display px-2 py-1 rounded-btn"
+            style={{
+              color: "var(--signal-long)",
+              border: "1px solid var(--signal-long)",
+            }}
+          >
+            BUY (Jupiter) ↗
+          </a>
           {signal.pairUrl && (
             <a
               href={signal.pairUrl}

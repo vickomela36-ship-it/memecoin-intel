@@ -68,13 +68,23 @@ interface RugSummary {
   risks?: { name?: string; level?: string }[];
 }
 
-/** Rugcheck the top degen candidates via our proxy; annotate warnings. */
-async function annotateRugcheck(signals: MemeSignal[]): Promise<void> {
+/**
+ * Rugcheck the top degen candidates; annotate warnings.
+ * Server-side (the /api/scan route) hits rugcheck.xyz directly;
+ * client-side falls back to our proxy route.
+ */
+async function annotateRugcheck(
+  signals: MemeSignal[],
+  server: boolean
+): Promise<void> {
   const targets = signals.slice(0, 8);
   await Promise.allSettled(
     targets.map(async (s) => {
       try {
-        const res = await fetch(`/api/rugcheck?mint=${s.address}`);
+        const url = server
+          ? `https://api.rugcheck.xyz/v1/tokens/${s.address}/report/summary`
+          : `/api/rugcheck?mint=${s.address}`;
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) return;
         const data: RugSummary = await res.json();
         const dangers = (data.risks ?? []).filter((r) => r.level === "danger");
@@ -105,7 +115,9 @@ async function annotateRugcheck(signals: MemeSignal[]): Promise<void> {
  *  - higherCap:  $5M+ FDV dips with buy-side sentiment intact
  *  - degens:     moonshot-tiered risky plays (3x/5x/10x/100x)
  */
-export async function runMemeScan(): Promise<MemeScanResult> {
+export async function runMemeScan(
+  opts: { server?: boolean } = {}
+): Promise<MemeScanResult> {
   const tokens = await discoverTokens();
   const boostsMap = new Map(tokens.map((t) => [t.address, t.boosts]));
   const pairMap = await fetchPairsBatch(tokens.map((t) => t.address));
@@ -211,6 +223,6 @@ export async function runMemeScan(): Promise<MemeScanResult> {
     scanned: pairMap.size,
   };
 
-  await annotateRugcheck(result.degens);
+  await annotateRugcheck(result.degens, opts.server ?? false);
   return result;
 }

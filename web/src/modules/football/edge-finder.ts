@@ -1,13 +1,20 @@
+// Binary market engine for YES/NO prediction platforms.
+//
+// The probability model is de-vigged bookmaker consensus (books are the
+// sharpest free estimate on earth), blended with ELO as a sanity check.
+// The edge is not "beat the books" — it's using the books' own numbers
+// against softer prediction-market pricing.
+
 import type {
+  BinaryQuestion,
   FootballMatch,
   MatchEdge,
   OddsEvent,
-  OutcomeEdge,
 } from "@/types";
 import { EloBook } from "./elo";
 
-/** Minimum edge to surface — below 5% it's noise. */
-export const EDGE_MIN = 0.05;
+/** Threshold band in cents around fair value before YES/NO has value. */
+const BAND_CENTS = 4;
 
 function normalize(name: string): string {
   return name
@@ -17,10 +24,7 @@ function normalize(name: string): string {
     .trim();
 }
 
-function matchOdds(
-  match: FootballMatch,
-  odds: OddsEvent[]
-): OddsEvent | null {
+function matchOdds(match: FootballMatch, odds: OddsEvent[]): OddsEvent | null {
   const home = normalize(match.homeTeam?.name ?? "");
   const away = normalize(match.awayTeam?.name ?? "");
   const kickoff = new Date(match.utcDate).getTime();
@@ -33,34 +37,90 @@ function matchOdds(
       (evAway.includes(away) || away.includes(evAway));
     if (!nameHit) continue;
     const evTime = new Date(ev.commence_time).getTime();
-    if (isFinite(kickoff) && isFinite(evTime) && Math.abs(kickoff - evTime) > 86_400_000)
+    if (
+      isFinite(kickoff) &&
+      isFinite(evTime) &&
+      Math.abs(kickoff - evTime) > 86_400_000
+    )
       continue;
     return ev;
   }
   return null;
 }
 
-function bestOddsPerOutcome(ev: OddsEvent) {
-  const best = {
-    home: { odds: 0, book: "" },
-    draw: { odds: 0, book: "" },
-    away: { odds: 0, book: "" },
-  };
+/**
+ * De-vigged consensus: for every book quoting all three outcomes,
+ * normalize implied probabilities (removes the overround), then average.
+ */
+function consensusProbs(
+  ev: OddsEvent
+): { probs: { home: number; draw: number; away: number }; books: number } | null {
+  const perBook: { home: number; draw: number; away: number }[] = [];
+
   for (const bk of ev.bookmakers ?? []) {
     for (const market of bk.markets ?? []) {
       if (market.key !== "h2h") continue;
+      let h = 0,
+        d = 0,
+        a = 0;
       for (const oc of market.outcomes ?? []) {
-        let slot: keyof typeof best | null = null;
-        if (oc.name === ev.home_team) slot = "home";
-        else if (oc.name === ev.away_team) slot = "away";
-        else if (oc.name === "Draw") slot = "draw";
-        if (slot && oc.price > best[slot].odds) {
-          best[slot] = { odds: oc.price, book: bk.title };
-        }
+        if (oc.price <= 1) continue;
+        if (oc.name === ev.home_team) h = 1 / oc.price;
+        else if (oc.name === ev.away_team) a = 1 / oc.price;
+        else if (oc.name === "Draw") d = 1 / oc.price;
+      }
+      const sum = h + d + a;
+      if (h > 0 && d > 0 && a > 0 && sum > 1) {
+        perBook.push({ home: h / sum, draw: d / sum, away: a / sum });
       }
     }
   }
-  return best;
+
+  if (!perBook.length) return null;
+  const n = perBook.length;
+  return {
+    probs: {
+      home: perBook.reduce((s, p) => s + p.home, 0) / n,
+      draw: perBook.reduce((s, p) => s + p.draw, 0) / n,
+      away: perBook.reduce((s, p) => s + p.away, 0) / n,
+    },
+    books: n,
+  };
+}
+
+function kellyYes(fairProb: number, priceCents: number): number {
+  const p = priceCents / 100;
+  if (p <= 0 || p >= 1 || fairProb <= p) return 0;
+  // Binary contract: win (1-p)/p per $ staked with prob q
+  const b = (1 - p) / p;
+  const kelly = (fairProb * b - (1 - fairProb)) / b;
+  return Math.min(0.25, Math.max(0, kelly)) * 100;
+}
+
+function buildQuestion(
+  key: BinaryQuestion["key"],
+  teamLabel: string,
+  fairProb: number,
+  booksCount: number
+): BinaryQuestion {
+  const fairCents = fairProb * 100;
+  const buyYesBelow = Math.max(1, Math.round(fairCents - BAND_CENTS));
+  const buyNoAbove = Math.min(99, Math.round(fairCents + BAND_CENTS));
+
+  // Conviction: needs distance from coin-flip AND real book coverage
+  let tier: BinaryQuestion["tier"] = "PASS";
+  if (booksCount >= 3 && (fairProb >= 0.65 || fairProb <= 0.35)) tier = "STRONG";
+  else if (booksCount >= 2 && (fairProb >= 0.55 || fairProb <= 0.45)) tier = "LEAN";
+
+  return {
+    key,
+    question: key === "draw" ? "DRAW?" : `${teamLabel.toUpperCase()} TO WIN?`,
+    fairProb,
+    buyYesBelow,
+    buyNoAbove,
+    kellyYesPct: Number(kellyYes(fairProb, buyYesBelow).toFixed(1)),
+    tier,
+  };
 }
 
 export function findEdges(
@@ -75,36 +135,25 @@ export function findEdges(
     const away = m.awayTeam?.name;
     if (!home || !away) continue;
 
-    const probs = elo.probabilities(home, away);
+    const eloProbs = elo.probabilities(home, away);
     const oddsEvent = matchOdds(m, odds);
-    if (!oddsEvent) continue; // no odds → no edge computable
+    const consensus = oddsEvent ? consensusProbs(oddsEvent) : null;
 
-    const best = bestOddsPerOutcome(oddsEvent);
-    const edges: OutcomeEdge[] = [];
+    // Blend: books are sharp — they dominate when available.
+    const blend = consensus
+      ? {
+          home: 0.85 * consensus.probs.home + 0.15 * eloProbs.home,
+          draw: 0.85 * consensus.probs.draw + 0.15 * eloProbs.draw,
+          away: 0.85 * consensus.probs.away + 0.15 * eloProbs.away,
+        }
+      : { home: eloProbs.home, draw: eloProbs.draw, away: eloProbs.away };
 
-    (["home", "draw", "away"] as const).forEach((oc) => {
-      const b = best[oc];
-      if (b.odds <= 1) return;
-      const implied = 1 / b.odds;
-      const modelProb = probs[oc];
-      const edge = modelProb - implied;
-      const kelly =
-        edge > 0 ? (modelProb * b.odds - 1) / (b.odds - 1) : 0;
-      edges.push({
-        outcome: oc,
-        modelProb,
-        impliedProb: implied,
-        edge,
-        bestOdds: b.odds,
-        bestBook: b.book,
-        kellyFraction: Math.min(Math.max(kelly, 0), 0.25),
-        signal: edge > 0.1 ? "STRONG" : edge > EDGE_MIN ? "MODERATE" : "NONE",
-      });
-    });
-
-    const positive = edges
-      .filter((e) => e.signal !== "NONE")
-      .sort((a, b) => b.edge - a.edge);
+    const booksCount = consensus?.books ?? 0;
+    const questions = [
+      buildQuestion("home", home, blend.home, booksCount),
+      buildQuestion("draw", "draw", blend.draw, booksCount),
+      buildQuestion("away", away, blend.away, booksCount),
+    ];
 
     out.push({
       matchId: m.id,
@@ -112,19 +161,19 @@ export function findEdges(
       away,
       competition: m.competition?.name ?? "",
       kickoff: m.utcDate,
-      homeElo: probs.homeElo,
-      awayElo: probs.awayElo,
-      probs: { home: probs.home, draw: probs.draw, away: probs.away },
-      edges,
-      bestEdge: positive[0] ?? null,
+      homeElo: eloProbs.homeElo,
+      awayElo: eloProbs.awayElo,
+      modelProbs: blend,
+      consensusProbs: consensus?.probs ?? null,
+      booksCount,
+      questions,
+      hasStrong: questions.some((q) => q.tier === "STRONG"),
     });
   }
 
-  // Edges first (largest first), then the rest by kickoff
+  // Strong conviction first, then by kickoff
   return out.sort((a, b) => {
-    const ea = a.bestEdge?.edge ?? -1;
-    const eb = b.bestEdge?.edge ?? -1;
-    if (ea !== eb) return eb - ea;
+    if (a.hasStrong !== b.hasStrong) return a.hasStrong ? -1 : 1;
     return new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime();
   });
 }

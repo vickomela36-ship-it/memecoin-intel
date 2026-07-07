@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo } from "react";
 import useSWR from "swr";
-import HeatmapGrid from "@/components/HeatmapGrid";
+import PerpTicketCard from "@/components/PerpTicketCard";
 import AccuracyBadge from "@/components/AccuracyBadge";
-import { fetchCryptoUniverse } from "@/modules/crypto/fetchers";
-import { computeCryptoScore } from "@/modules/crypto/score";
+import { buildAllTickets } from "@/modules/crypto/perps";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
 import { timeAgo } from "@/lib/utils";
 
@@ -20,7 +19,7 @@ export default function CryptoView({
   refreshInterval: number;
   onLogged: () => void;
 }) {
-  const { data, error, isLoading } = useSWR("crypto-universe", fetchCryptoUniverse, {
+  const { data, error, isLoading } = useSWR("perp-desk", buildAllTickets, {
     refreshInterval,
     keepPreviousData: true,
     onErrorRetry: (_err, _key, _cfg, revalidate, { retryCount }) => {
@@ -29,38 +28,37 @@ export default function CryptoView({
     },
   });
 
-  const rows = useMemo(
-    () => (data ?? []).map(computeCryptoScore).sort((a, b) => b.score - a.score),
-    [data]
+  const tickets = useMemo(() => data ?? [], [data]);
+  const fetchedAt = useMemo(() => Date.now(), [data]);
+  const actionable = useMemo(
+    () => tickets.filter((t) => t.direction !== "STAND ASIDE"),
+    [tickets]
   );
 
-  const fetchedAt = useMemo(() => Date.now(), [data]);
-
-  // Signal strip: momentum shifting when any token is 30+ points off neutral
+  // Strip: momentum shifting when any HIGH/MEDIUM conviction ticket exists
   useEffect(() => {
-    onStatus(rows.some((r) => Math.abs(r.score - 50) >= 30));
-  }, [rows, onStatus]);
+    onStatus(actionable.some((t) => t.confidence !== "LOW"));
+  }, [actionable, onStatus]);
 
-  // Log directional signals + resolve 24h-old ones against current prices
+  // Log directional calls; resolve 24h later against current mark price
   useEffect(() => {
-    if (!rows.length) return;
-    for (const r of rows) {
-      if (r.direction === "neutral") continue;
+    if (!tickets.length) return;
+    for (const t of actionable) {
       logSignal({
         module: "crypto",
         signal: {
-          type: "score",
-          target: r.id,
-          direction: r.direction,
-          score: r.score,
-          details: { label: r.label },
+          type: "perp",
+          target: t.symbol,
+          direction: t.direction === "LONG" ? "bullish" : "bearish",
+          score: t.bias,
+          details: { confidence: t.confidence, regime: t.regime },
         },
-        priceAtSignal: r.price,
+        priceAtSignal: t.markPrice,
       });
     }
-    const priceById = new Map(rows.map((r) => [r.id, r.price]));
+    const priceBySymbol = new Map(tickets.map((t) => [t.symbol, t.markPrice]));
     for (const log of pendingLogs("crypto", DAY)) {
-      const now = priceById.get(log.signal.target);
+      const now = priceBySymbol.get(log.signal.target);
       if (now == null || log.outcome.priceAtSignal <= 0) continue;
       const move = now / log.outcome.priceAtSignal - 1;
       const hit =
@@ -69,32 +67,39 @@ export default function CryptoView({
       resolveLog(log.id, hit ? "hit" : "miss", now);
     }
     onLogged();
-  }, [rows, onLogged]);
+  }, [tickets, actionable, onLogged]);
 
   return (
     <div className="space-y-3">
       <div className="card flex items-center justify-between flex-wrap gap-2">
         <span className="font-mono-display text-sm text-[var(--text-secondary)]">
-          {rows.length} tokens scored · top-20 by mcap + top meme category
+          PERP DESK · {tickets.length} symbols · {actionable.length} actionable ·
+          funding + OI + taker flow + trend
         </span>
         <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
-          {error
-            ? `⚠ CoinGecko unreachable — showing last data (${timeAgo(fetchedAt)})`
+          {error && !tickets.length
+            ? "⚠ Binance unreachable"
             : isLoading && !data
-              ? "loading…"
-              : `updated ${timeAgo(fetchedAt)} · auto-refresh ${refreshInterval / 1000}s`}
+              ? "loading positioning data…"
+              : `updated ${timeAgo(fetchedAt)} · refresh ${refreshInterval / 1000}s`}
         </span>
       </div>
 
-      {rows.length > 0 ? (
-        <HeatmapGrid rows={rows} />
-      ) : error ? (
+      {tickets.map((t) => (
+        <PerpTicketCard key={t.symbol} ticket={t} />
+      ))}
+
+      {!tickets.length && error && (
         <div className="card text-sm text-[var(--signal-short)]">
-          CoinGecko API unreachable. Retrying automatically — the page stays up,
-          data will fill in when the API recovers.
+          Binance futures API unreachable from this network. Data loads
+          directly in your browser (Binance blocks datacenter IPs but allows
+          browsers) — if this persists, your region may require a VPN.
         </div>
-      ) : (
-        <div className="card text-sm text-[var(--text-secondary)]">Loading market data…</div>
+      )}
+      {!tickets.length && !error && (
+        <div className="card text-sm text-[var(--text-secondary)]">
+          Loading funding, open interest, and flow data…
+        </div>
       )}
 
       <AccuracyBadge module="crypto" />

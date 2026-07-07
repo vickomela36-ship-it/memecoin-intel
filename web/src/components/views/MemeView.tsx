@@ -4,11 +4,10 @@ import { useEffect, useMemo } from "react";
 import useSWR from "swr";
 import SignalCard from "@/components/SignalCard";
 import AccuracyBadge from "@/components/AccuracyBadge";
-import { runMemeScan } from "@/modules/memecoin/scanner";
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
-import { timeAgo } from "@/lib/utils";
-import type { MemeSignal } from "@/types";
+import { jsonFetcher, timeAgo } from "@/lib/utils";
+import type { MemeScanResult, MemeSignal } from "@/types";
 
 const DAY = 24 * 3600 * 1000;
 // Hit multipliers by signal type — shown in the Track Record definitions
@@ -35,9 +34,13 @@ export default function MemeView({
   refreshInterval: number;
   onLogged: () => void;
 }) {
-  const { data, error, isLoading } = useSWR("meme-scan", runMemeScan, {
-    refreshInterval,
-    keepPreviousData: true,
+  // Server route runs ONE shared scan per minute for all visitors
+  const { data, error, isLoading } = useSWR(
+    "/api/scan",
+    (url: string) => jsonFetcher<MemeScanResult>(url),
+    {
+      refreshInterval,
+      keepPreviousData: true,
     onErrorRetry: (_err, _key, _cfg, revalidate, { retryCount }) => {
       if (retryCount >= 3) return;
       setTimeout(() => revalidate({ retryCount }), 5000 * (retryCount + 1));

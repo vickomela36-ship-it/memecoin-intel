@@ -36,7 +36,9 @@ export function clamp(v: number, lo = 0, hi = 100): number {
 }
 
 export async function jsonFetcher<T = unknown>(url: string): Promise<T> {
-  const res = await fetch(url);
+  // no-store matters server-side: without it Next's data cache would freeze
+  // DexScreener responses inside the cached scan route forever.
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
   return res.json();
 }

@@ -8,7 +8,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "challenge", label: "CHALLENGE" },
   { id: "portfolio", label: "PORTFOLIO" },
   { id: "football", label: "FOOTBALL" },
-  { id: "crypto", label: "CRYPTO SCORE" },
+  { id: "crypto", label: "PERPS" },
 ];
 
 export default function TabNav({

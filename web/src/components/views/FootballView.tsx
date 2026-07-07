@@ -51,41 +51,45 @@ export default function FootballView({
     }
   );
 
-  const edges = useMemo(
-    () => (data?.edges ?? []).filter((m) => m.bestEdge !== null),
+  const strong = useMemo(
+    () => (data?.edges ?? []).filter((m) => m.hasStrong),
     [data]
   );
   const rest = useMemo(
-    () => (data?.edges ?? []).filter((m) => m.bestEdge === null).slice(0, 10),
+    () => (data?.edges ?? []).filter((m) => !m.hasStrong).slice(0, 12),
     [data]
   );
 
   useEffect(() => {
-    onStatus(edges.length > 0);
-  }, [edges, onStatus]);
+    onStatus(strong.length > 0);
+  }, [strong, onStatus]);
 
-  // Log edges; resolve past matches via result lookup
+  // Log STRONG YES-side calls (fair >= 60% on an outcome)
   useEffect(() => {
-    for (const m of edges) {
+    for (const m of strong) {
+      const q = m.questions.find(
+        (x) => x.tier === "STRONG" && x.fairProb >= 0.6
+      );
+      if (!q) continue;
       logSignal({
         module: "football",
         signal: {
-          type: "edge",
+          type: "binary",
           target: String(m.matchId),
-          direction: m.bestEdge!.outcome,
-          score: Math.round(m.bestEdge!.edge * 100),
-          details: { home: m.home, away: m.away, odds: m.bestEdge!.bestOdds },
+          direction: q.key,
+          score: Math.round(q.fairProb * 100),
+          details: { home: m.home, away: m.away, question: q.question },
         },
-        priceAtSignal: m.bestEdge!.bestOdds,
+        priceAtSignal: q.fairProb,
       });
     }
-    if (edges.length) onLogged();
-  }, [edges, onLogged]);
+    if (strong.length) onLogged();
+  }, [strong, onLogged]);
 
+  // Resolve past calls via final score
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Resolve edges older than 3h past their logging (match should be done)
       const pending = pendingLogs("football", 5 * 3600 * 1000).slice(0, 3);
       for (const log of pending) {
         const match = await fetchMatchResult(Number(log.signal.target));
@@ -107,8 +111,7 @@ export default function FootballView({
     };
   }, [data, onLogged]);
 
-  const keysMissing =
-    error && String(error).includes("503");
+  const keysMissing = error && String(error).includes("503");
 
   return (
     <div className="space-y-3">
@@ -127,39 +130,43 @@ export default function FootballView({
         <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
           {isLoading && !data
             ? "loading fixtures + odds…"
-            : `${data?.fixtures ?? 0} fixtures · ${data?.oddsEvents ?? 0} odds events · edges shown at 5%+`}
+            : `${data?.fixtures ?? 0} fixtures · ${data?.oddsEvents ?? 0} odds events · fair value = de-vigged consensus + ELO`}
         </span>
       </div>
 
       {keysMissing && (
         <div className="card text-sm" style={{ color: "var(--signal-neutral)" }}>
           API keys not configured. Add FOOTBALL_DATA_API_KEY and ODDS_API_KEY
-          to .env.local (or Vercel env settings) to enable this module.
+          to the Vercel env settings (or .env.local) to enable this module.
         </div>
       )}
 
-      {edges.length > 0 && (
+      {strong.length > 0 && (
         <>
           <h2 className="font-mono-display text-lg">
-            EDGES DETECTED ({edges.length})
+            STRONG CALLS ({strong.length})
           </h2>
-          {edges.map((m) => (
+          <p className="text-xs text-[var(--text-tertiary)]">
+            Fair value is 65¢+ (or 35¢-) with 3+ books behind it. Bet only when
+            the platform&apos;s price is outside the band.
+          </p>
+          {strong.map((m) => (
             <MatchCard key={m.matchId} match={m} />
           ))}
         </>
       )}
 
-      {edges.length === 0 && !isLoading && !keysMissing && (
+      {strong.length === 0 && !isLoading && !keysMissing && (
         <div className="card text-sm text-[var(--text-secondary)]">
-          No 5%+ edges right now. The book prices and the model agree — betting
-          without an edge is negative-EV, so the correct play is none.
+          No strong calls right now — every market is near fair value. Betting
+          without an edge is negative-EV; the correct play is none.
         </div>
       )}
 
       {rest.length > 0 && (
         <details>
           <summary className="font-mono-display text-sm text-[var(--text-secondary)] cursor-pointer py-1">
-            Upcoming matches without an edge ({rest.length})
+            Other upcoming matches ({rest.length})
           </summary>
           <div className="space-y-2 mt-2">
             {rest.map((m) => (

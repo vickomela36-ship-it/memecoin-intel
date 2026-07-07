@@ -116,15 +116,14 @@ export interface OddsEvent {
   }[];
 }
 
-export interface OutcomeEdge {
-  outcome: "home" | "draw" | "away";
-  modelProb: number;
-  impliedProb: number;
-  edge: number;
-  bestOdds: number;
-  bestBook: string;
-  kellyFraction: number;
-  signal: "STRONG" | "MODERATE" | "NONE";
+export interface BinaryQuestion {
+  key: "home" | "draw" | "away";
+  question: string; // "ARSENAL TO WIN?"
+  fairProb: number; // 0-1, de-vigged consensus blended with ELO
+  buyYesBelow: number; // cents — YES has value below this price
+  buyNoAbove: number; // cents — NO has value above this price
+  kellyYesPct: number; // Kelly % of bankroll if YES bought at threshold
+  tier: "STRONG" | "LEAN" | "PASS";
 }
 
 export interface MatchEdge {
@@ -135,9 +134,46 @@ export interface MatchEdge {
   kickoff: string;
   homeElo: number;
   awayElo: number;
-  probs: { home: number; draw: number; away: number };
-  edges: OutcomeEdge[];
-  bestEdge: OutcomeEdge | null;
+  modelProbs: { home: number; draw: number; away: number };
+  consensusProbs: { home: number; draw: number; away: number } | null;
+  booksCount: number;
+  questions: BinaryQuestion[];
+  hasStrong: boolean;
+}
+
+// ── Perp Desk ─────────────────────────────────────────────────────────────
+
+/** Component score is -100 (max short) .. +100 (max long). */
+export interface PerpComponent {
+  name: string;
+  weightPct: number;
+  score: number;
+  detail: string;
+}
+
+export interface PerpTicket {
+  symbol: string; // BTCUSDT
+  display: string; // BTC
+  markPrice: number;
+  change24h: number;
+  bias: number; // -100..+100
+  direction: "LONG" | "SHORT" | "STAND ASIDE";
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  regime: string;
+  components: PerpComponent[];
+  entry: number;
+  pullbackEntry: number; // 1h EMA20
+  stopPct: number;
+  stopPrice: number;
+  tp1: number;
+  tp2: number;
+  atrPct: number;
+  maxLev: number;
+  fundingPct8h: number;
+  nextFundingMs: number;
+  oiChange24hPct: number;
+  squeezeWatch: string | null;
+  warnings: string[];
 }
 
 // ── Crypto ────────────────────────────────────────────────────────────────

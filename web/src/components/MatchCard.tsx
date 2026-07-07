@@ -4,22 +4,22 @@ import { useState } from "react";
 import { cx } from "@/lib/utils";
 import type { MatchEdge } from "@/types";
 
-const OUTCOME_LABEL: Record<string, string> = {
-  home: "Home",
-  draw: "Draw",
-  away: "Away",
+const TIER_COLOR: Record<string, string> = {
+  STRONG: "var(--signal-edge)",
+  LEAN: "var(--signal-neutral)",
+  PASS: "var(--text-tertiary)",
 };
 
 export default function MatchCard({ match }: { match: MatchEdge }) {
   const [open, setOpen] = useState(false);
-  const hasEdge = match.bestEdge !== null;
   const kickoff = new Date(match.kickoff);
 
   return (
-    <div className={cx("card", hasEdge && "edge-glow")}>
+    <div className={cx("card", match.hasStrong && "edge-glow")}>
+      {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          {hasEdge && (
+          {match.hasStrong && (
             <span
               className="font-mono-display text-xs px-2 py-0.5 rounded-input pulse-live"
               style={{
@@ -28,7 +28,7 @@ export default function MatchCard({ match }: { match: MatchEdge }) {
                 background: "var(--accent-glow)",
               }}
             >
-              EDGE {(match.bestEdge!.edge * 100).toFixed(1)}%
+              STRONG CALL
             </span>
           )}
           <span className="font-mono-display">
@@ -48,91 +48,98 @@ export default function MatchCard({ match }: { match: MatchEdge }) {
         </span>
       </div>
 
-      {/* Model vs Market table */}
+      {/* Binary questions */}
       <table className="data-table mt-3">
         <thead>
           <tr>
-            <th>Outcome</th>
-            <th>Model</th>
             <th>Market</th>
-            <th>Edge</th>
-            <th>Best odds</th>
+            <th>Fair value</th>
+            <th>Buy YES below</th>
+            <th>Buy NO above</th>
+            <th>Kelly @ YES</th>
+            <th>Call</th>
           </tr>
         </thead>
         <tbody>
-          {match.edges.map((e) => {
-            const isValue = e.signal !== "NONE";
-            return (
-              <tr key={e.outcome}>
-                <td>{OUTCOME_LABEL[e.outcome]}</td>
-                <td className="font-mono-display">
-                  {(e.modelProb * 100).toFixed(1)}%
-                </td>
-                <td className="font-mono-display">
-                  {(e.impliedProb * 100).toFixed(1)}%
-                </td>
-                <td
-                  className="font-mono-display"
-                  style={{
-                    color: isValue
-                      ? "var(--signal-edge)"
-                      : e.edge > 0
-                        ? "var(--text-secondary)"
-                        : "var(--text-tertiary)",
-                  }}
-                >
-                  {e.edge >= 0 ? "+" : ""}
-                  {(e.edge * 100).toFixed(1)}%{isValue ? " ◀ VALUE" : ""}
-                </td>
-                <td className="font-mono-display text-[var(--text-secondary)]">
-                  {e.bestOdds.toFixed(2)}{" "}
-                  <span className="text-[var(--text-tertiary)]">
-                    ({e.bestBook})
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
+          {match.questions.map((q) => (
+            <tr key={q.key}>
+              <td className="font-mono-display text-xs">{q.question}</td>
+              <td className="font-mono-display">
+                {(q.fairProb * 100).toFixed(0)}¢
+              </td>
+              <td
+                className="font-mono-display"
+                style={{ color: "var(--signal-long)" }}
+              >
+                &lt; {q.buyYesBelow}¢
+              </td>
+              <td
+                className="font-mono-display"
+                style={{ color: "var(--signal-short)" }}
+              >
+                &gt; {q.buyNoAbove}¢
+              </td>
+              <td className="font-mono-display text-[var(--text-secondary)]">
+                {q.kellyYesPct > 0 ? `${q.kellyYesPct}%` : "—"}
+              </td>
+              <td
+                className="font-mono-display text-xs"
+                style={{ color: TIER_COLOR[q.tier] }}
+              >
+                {q.tier}
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
 
-      {hasEdge && (
-        <div className="mt-2 text-sm font-mono-display">
-          Kelly stake:{" "}
-          <span style={{ color: "var(--signal-edge)" }}>
-            {(match.bestEdge!.kellyFraction * 100).toFixed(1)}% of bankroll
-          </span>{" "}
-          on {OUTCOME_LABEL[match.bestEdge!.outcome]} @{" "}
-          {match.bestEdge!.bestOdds.toFixed(2)}
-        </div>
-      )}
+      <div className="text-xs text-[var(--text-tertiary)] mt-2">
+        How to use: if the platform&apos;s YES price is below &quot;buy YES
+        below&quot;, YES is underpriced — and vice-versa for NO. Between the two
+        numbers there is no edge: don&apos;t bet.
+      </div>
 
+      {/* Breakdown */}
       <button
         onClick={() => setOpen(!open)}
         className="mt-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono-display"
       >
-        {open ? "▾" : "▸"} Why {hasEdge ? "this edge" : "no edge"}
+        {open ? "▾" : "▸"} Where the number comes from
       </button>
       {open && (
         <ul className="mt-2 text-sm space-y-0.5 text-[var(--text-secondary)]">
-          <li>
-            • {match.home} ELO: {match.homeElo.toFixed(0)} (+65 home advantage
-            applied)
-          </li>
-          <li>
-            • {match.away} ELO: {match.awayElo.toFixed(0)}
-          </li>
-          <li>
-            • Model probabilities: H {(match.probs.home * 100).toFixed(0)}% / D{" "}
-            {(match.probs.draw * 100).toFixed(0)}% / A{" "}
-            {(match.probs.away * 100).toFixed(0)}%
-          </li>
+          {match.consensusProbs ? (
+            <>
+              <li>
+                • De-vigged consensus of {match.booksCount} bookmakers (85%
+                weight): H {(match.consensusProbs.home * 100).toFixed(0)}% / D{" "}
+                {(match.consensusProbs.draw * 100).toFixed(0)}% / A{" "}
+                {(match.consensusProbs.away * 100).toFixed(0)}%
+              </li>
+              <li>
+                • ELO sanity check (15% weight): {match.home}{" "}
+                {match.homeElo.toFixed(0)} vs {match.away}{" "}
+                {match.awayElo.toFixed(0)} (+65 home adv)
+              </li>
+            </>
+          ) : (
+            <li style={{ color: "var(--signal-neutral)" }}>
+              ⚠ No bookmaker odds found for this match — fair value is pure
+              ELO, treat with less confidence (calls capped at LEAN).
+            </li>
+          )}
           <li className="text-[var(--text-tertiary)]">
-            ⚠ Model limitation: ELO doesn&apos;t capture tactics, injuries, or
-            individual form. This is a statistical edge, not a certainty.
+            ⚠ Model limitation: neither books nor ELO know team news from the
+            last hour. This is a pricing edge, not a certainty.
           </li>
         </ul>
       )}
+
+      <div className="flex justify-end mt-1">
+        <span className="text-xs text-[var(--text-tertiary)]">
+          Not financial advice.
+        </span>
+      </div>
     </div>
   );
 }

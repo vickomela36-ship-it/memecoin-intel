@@ -56,7 +56,7 @@ export default function Settings({
             Refresh intervals
           </div>
           <label className="block text-sm">
-            <span className="text-[var(--text-secondary)] text-xs">Crypto score</span>
+            <span className="text-[var(--text-secondary)] text-xs">Perp desk</span>
             <select
               value={settings.cryptoRefreshMs}
               onChange={(e) => update({ cryptoRefreshMs: Number(e.target.value) })}
