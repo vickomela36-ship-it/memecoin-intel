@@ -12,10 +12,12 @@ import Settings, {
 import CryptoView from "@/components/views/CryptoView";
 import MemeView from "@/components/views/MemeView";
 import FootballView from "@/components/views/FootballView";
-import type { ModuleId } from "@/types";
+import ChallengeView from "@/components/views/ChallengeView";
+import PortfolioView from "@/components/views/PortfolioView";
+import type { TabId } from "@/types";
 
 export default function Home() {
-  const [tab, setTab] = useState<ModuleId>("memecoin");
+  const [tab, setTab] = useState<TabId>("memecoin");
   const [strip, setStrip] = useState<StripState>({
     meme: false,
     edge: false,
@@ -66,8 +68,9 @@ export default function Home() {
       </div>
 
       <div className="flex-1 px-4 py-4">
-        {/* Keep all three mounted so the strip reflects ALL modules, not just
-            the visible tab — display:none the inactive ones. */}
+        {/* Data modules stay mounted so the strip reflects ALL of them —
+            display:none the inactive ones. Challenge/Portfolio mount on
+            demand so they re-read localStorage each visit. */}
         <div style={{ display: tab === "memecoin" ? "block" : "none" }}>
           <MemeView
             onStatus={onMeme}
@@ -85,6 +88,8 @@ export default function Home() {
             onLogged={onLogged}
           />
         </div>
+        {tab === "challenge" && <ChallengeView />}
+        {tab === "portfolio" && <PortfolioView />}
       </div>
 
       <TrackRecord refreshKey={trackKey} />

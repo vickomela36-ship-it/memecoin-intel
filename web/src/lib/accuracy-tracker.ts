@@ -4,7 +4,8 @@ const KEY = "mi_signal_log_v1";
 
 // Hit definitions — displayed verbatim in the Track Record panel.
 export const HIT_DEFINITIONS: Record<ModuleId, string> = {
-  memecoin: "Launch: +50% within 24h. Recovery: +20% within 24h.",
+  memecoin:
+    "Launch/Degen: +50% within 24h. Recovery (low & higher cap): +20% within 24h.",
   football: "Edge pick wins the match.",
   crypto: "Direction (bullish/bearish) matches sign of 24h price move.",
 };

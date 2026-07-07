@@ -2,6 +2,8 @@
 
 export type ModuleId = "memecoin" | "football" | "crypto";
 
+export type TabId = ModuleId | "challenge" | "portfolio";
+
 export interface ScoreComponent {
   name: string;
   weightPct: number;
@@ -57,7 +59,7 @@ export interface DexPair {
 }
 
 export interface MemeSignal {
-  mode: "LAUNCH" | "RECOVERY";
+  mode: "LAUNCH" | "RECOVERY" | "HIGHER-CAP" | "DEGEN";
   address: string;
   symbol: string;
   name: string;
@@ -74,6 +76,21 @@ export interface MemeSignal {
   buySellRatio: number;
   pairUrl: string;
   boosts: number;
+  /** Sizing rule key for the trade plan: A / B / 3x POSSIBLE / 5x POTENTIAL / 10x RUNNER / 100x MOONSHOT */
+  sizingKey: string;
+  /** Degen multiplier tier, e.g. "10x RUNNER" (DEGEN mode only) */
+  tier?: string;
+  riskLevel?: string;
+  /** Letter grade for recovery signals (A/B/C) */
+  grade?: string;
+}
+
+export interface MemeScanResult {
+  launches: MemeSignal[];
+  recoveries: MemeSignal[];
+  higherCap: MemeSignal[];
+  degens: MemeSignal[];
+  scanned: number;
 }
 
 // ── Football ──────────────────────────────────────────────────────────────

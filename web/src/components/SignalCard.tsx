@@ -2,12 +2,23 @@
 
 import { useState } from "react";
 import { cx, fmtPrice, fmtUsd, timeAgo } from "@/lib/utils";
+import { positionPlan } from "@/lib/challenge";
+import { addWatch, getChallenge } from "@/lib/storage";
 import type { MemeSignal } from "@/types";
 import ScoreBar from "./ScoreBar";
 
 const MODE_COLOR: Record<MemeSignal["mode"], string> = {
   LAUNCH: "var(--signal-long)",
   RECOVERY: "var(--signal-neutral)",
+  "HIGHER-CAP": "var(--signal-long)",
+  DEGEN: "var(--signal-short)",
+};
+
+const TIER_COLOR: Record<string, string> = {
+  "100x MOONSHOT": "var(--signal-edge)",
+  "10x RUNNER": "var(--signal-long)",
+  "5x POTENTIAL": "var(--signal-neutral)",
+  "3x POSSIBLE": "var(--text-secondary)",
 };
 
 export default function SignalCard({
@@ -18,20 +29,68 @@ export default function SignalCard({
   fetchedAt: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [watched, setWatched] = useState<null | "added" | "dup">(null);
   const clr = MODE_COLOR[signal.mode];
   const strong = signal.score >= 75;
+
+  const ch = getChallenge();
+  const bankroll = ch.active ? ch.currentBankroll : 100;
+  const plan = positionPlan(bankroll, signal.sizingKey);
+
+  function handleWatch() {
+    const ok = addWatch({
+      address: signal.address,
+      symbol: signal.symbol,
+      name: signal.name,
+      entryPrice: signal.priceUsd,
+      target2x: signal.priceUsd * 2,
+      grade: signal.tier ?? signal.grade ?? signal.mode,
+      pairUrl: signal.pairUrl,
+    });
+    setWatched(ok ? "added" : "dup");
+  }
 
   return (
     <div className={cx("card", strong && "edge-glow")}>
       {/* Header row */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span
             className="font-mono-display text-xs px-2 py-0.5 rounded-input"
             style={{ color: clr, border: `1px solid ${clr}`, background: `${clr}15` }}
           >
             {signal.mode}
           </span>
+          {signal.tier && (
+            <span
+              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
+              style={{
+                color: TIER_COLOR[signal.tier] ?? "var(--text-secondary)",
+                border: `1px solid ${TIER_COLOR[signal.tier] ?? "var(--text-secondary)"}`,
+              }}
+            >
+              {signal.tier}
+            </span>
+          )}
+          {signal.grade && (
+            <span
+              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
+              style={{
+                color: signal.grade === "A" ? "var(--signal-long)" : "var(--text-secondary)",
+                border: "1px solid var(--border-subtle)",
+              }}
+            >
+              GRADE {signal.grade}
+            </span>
+          )}
+          {signal.riskLevel && (
+            <span
+              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
+              style={{ color: "var(--signal-short)", border: "1px solid var(--signal-short)" }}
+            >
+              RISK: {signal.riskLevel}
+            </span>
+          )}
           <span className="font-mono-display text-lg">${signal.symbol}</span>
           <span className="text-sm text-[var(--text-secondary)] hidden sm:inline">
             {signal.name.slice(0, 24)}
@@ -53,9 +112,7 @@ export default function SignalCard({
         <Stat label="Liquidity" value={fmtUsd(signal.liquidity)} />
         <Stat
           label="Vol/MCap"
-          value={
-            signal.fdv > 0 ? `${(signal.vol24h / signal.fdv).toFixed(1)}x` : "—"
-          }
+          value={signal.fdv > 0 ? `${(signal.vol24h / signal.fdv).toFixed(1)}x` : "—"}
         />
         <Stat
           label="Buys/Sells"
@@ -72,6 +129,19 @@ export default function SignalCard({
         />
         <Stat label="Vol 1h" value={fmtUsd(signal.volH1)} />
         <Stat label="Boosts" value={signal.boosts ? String(signal.boosts) : "—"} />
+      </div>
+
+      {/* Trade plan — sized from the live challenge bankroll */}
+      <div
+        className="mt-3 px-3 py-2 rounded-input text-sm font-mono-display"
+        style={{ background: "var(--bg-elevated)", borderLeft: `3px solid ${clr}` }}
+      >
+        <span className="text-[var(--text-secondary)]">PLAN</span>{" "}
+        Buy <b>${plan.sizeUsd.toFixed(2)}</b> ({(plan.fraction * 100).toFixed(0)}%
+        of ${bankroll.toFixed(0)}) · Stop <b>-{plan.stopPct}%</b> (max loss $
+        {plan.maxLossUsd.toFixed(2)}) · Sell 50% @ <b>{plan.tp1Mult}x</b> · 25% @{" "}
+        <b>{plan.tp2Mult}x</b> · ride 25%
+        <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{plan.why}</div>
       </div>
 
       {/* Expandable reasoning */}
@@ -122,20 +192,26 @@ export default function SignalCard({
         </div>
       )}
 
-      {/* Link + disclaimer */}
-      <div className="flex items-center justify-between mt-2">
-        {signal.pairUrl ? (
-          <a
-            href={signal.pairUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs font-mono-display text-[var(--signal-edge)] hover:underline"
+      {/* Actions + disclaimer */}
+      <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleWatch}
+            className="text-xs font-mono-display px-2 py-1 rounded-btn border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-active)]"
           >
-            View on DexScreener ↗
-          </a>
-        ) : (
-          <span />
-        )}
+            {watched === "added" ? "✓ Watching" : watched === "dup" ? "Already watching" : "+ Watch"}
+          </button>
+          {signal.pairUrl && (
+            <a
+              href={signal.pairUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-mono-display text-[var(--signal-edge)] hover:underline"
+            >
+              DexScreener ↗
+            </a>
+          )}
+        </div>
         <span className="text-xs text-[var(--text-tertiary)]">
           Not financial advice. Size accordingly.
         </span>
