@@ -59,7 +59,9 @@ export interface DexPair {
 }
 
 export interface MemeSignal {
-  mode: "LAUNCH" | "RECOVERY" | "HIGHER-CAP" | "DEGEN";
+  mode: "LAUNCH" | "RECOVERY" | "HIGHER-CAP" | "DEGEN" | "SURE" | "MOMENTUM";
+  /** Human category, e.g. "2x GRINDER", "3x RECOVERY", "MOMENTUM RIDER" */
+  playType: string;
   address: string;
   symbol: string;
   name: string;
@@ -76,21 +78,36 @@ export interface MemeSignal {
   buySellRatio: number;
   pairUrl: string;
   boosts: number;
+  /** Price-change intel */
+  m5: number;
+  h1: number;
+  h6: number;
+  h24: number;
+  /** Total txns (buys+sells) in the last hour */
+  txns1h: number;
   /** Sizing rule key for the trade plan: A / B / 3x POSSIBLE / 5x POTENTIAL / 10x RUNNER / 100x MOONSHOT */
   sizingKey: string;
   /** Degen multiplier tier, e.g. "10x RUNNER" (DEGEN mode only) */
   tier?: string;
   riskLevel?: string;
-  /** Letter grade for recovery signals (A/B/C) */
-  grade?: string;
+}
+
+export interface ScanPulse {
+  discovered: number;
+  analyzed: number;
+  greenPct: number; // % of analyzed tokens green on 24h
+  medianH24: number;
+  totalVol24hUsd: number;
 }
 
 export interface MemeScanResult {
-  launches: MemeSignal[];
-  recoveries: MemeSignal[];
+  pulse: ScanPulse;
+  sure2x: MemeSignal[];
+  recovery3x: MemeSignal[];
+  momentum: MemeSignal[];
   higherCap: MemeSignal[];
+  launches: MemeSignal[];
   degens: MemeSignal[];
-  scanned: number;
 }
 
 // ── Football ──────────────────────────────────────────────────────────────
@@ -154,6 +171,7 @@ export interface PerpComponent {
 export interface PerpTicket {
   symbol: string; // BTCUSDT
   display: string; // BTC
+  source: "Binance" | "Bybit";
   markPrice: number;
   change24h: number;
   bias: number; // -100..+100

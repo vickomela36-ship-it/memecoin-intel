@@ -163,12 +163,16 @@ export default function PerpTicketCard({ ticket }: { ticket: PerpTicket }) {
       {/* Execution link + disclaimer */}
       <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
         <a
-          href={`https://www.binance.com/en/futures/${ticket.symbol}`}
+          href={
+            ticket.source === "Bybit"
+              ? `https://www.bybit.com/trade/usdt/${ticket.symbol}`
+              : `https://www.binance.com/en/futures/${ticket.symbol}`
+          }
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs font-mono-display text-[var(--signal-edge)] hover:underline"
         >
-          Open {ticket.symbol} on Binance ↗
+          Open {ticket.symbol} on {ticket.source} ↗
         </a>
         <span className="text-xs text-[var(--text-tertiary)]">
           Leverage amplifies losses. Not financial advice.

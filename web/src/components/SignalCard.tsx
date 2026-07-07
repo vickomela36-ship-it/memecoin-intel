@@ -8,9 +8,11 @@ import type { MemeSignal } from "@/types";
 import ScoreBar from "./ScoreBar";
 
 const MODE_COLOR: Record<MemeSignal["mode"], string> = {
-  LAUNCH: "var(--signal-long)",
+  SURE: "var(--signal-long)",
   RECOVERY: "var(--signal-neutral)",
+  MOMENTUM: "var(--signal-neutral)",
   "HIGHER-CAP": "var(--signal-long)",
+  LAUNCH: "var(--signal-long)",
   DEGEN: "var(--signal-short)",
 };
 
@@ -44,7 +46,7 @@ export default function SignalCard({
       name: signal.name,
       entryPrice: signal.priceUsd,
       target2x: signal.priceUsd * 2,
-      grade: signal.tier ?? signal.grade ?? signal.mode,
+      grade: signal.tier ?? signal.playType,
       pairUrl: signal.pairUrl,
     });
     setWatched(ok ? "added" : "dup");
@@ -57,32 +59,14 @@ export default function SignalCard({
         <div className="flex items-center gap-2 flex-wrap">
           <span
             className="font-mono-display text-xs px-2 py-0.5 rounded-input"
-            style={{ color: clr, border: `1px solid ${clr}`, background: `${clr}15` }}
+            style={{
+              color: signal.tier ? (TIER_COLOR[signal.tier] ?? clr) : clr,
+              border: `1px solid ${signal.tier ? (TIER_COLOR[signal.tier] ?? clr) : clr}`,
+              background: `${clr}15`,
+            }}
           >
-            {signal.mode}
+            {signal.playType}
           </span>
-          {signal.tier && (
-            <span
-              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
-              style={{
-                color: TIER_COLOR[signal.tier] ?? "var(--text-secondary)",
-                border: `1px solid ${TIER_COLOR[signal.tier] ?? "var(--text-secondary)"}`,
-              }}
-            >
-              {signal.tier}
-            </span>
-          )}
-          {signal.grade && (
-            <span
-              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
-              style={{
-                color: signal.grade === "A" ? "var(--signal-long)" : "var(--text-secondary)",
-                border: "1px solid var(--border-subtle)",
-              }}
-            >
-              GRADE {signal.grade}
-            </span>
-          )}
           {signal.riskLevel && (
             <span
               className="font-mono-display text-xs px-2 py-0.5 rounded-input"
@@ -128,7 +112,36 @@ export default function SignalCard({
           }
         />
         <Stat label="Vol 1h" value={fmtUsd(signal.volH1)} />
-        <Stat label="Boosts" value={signal.boosts ? String(signal.boosts) : "—"} />
+        <Stat label="Txns 1h" value={signal.txns1h ? String(signal.txns1h) : "—"} />
+      </div>
+
+      {/* Price-change intel row */}
+      <div className="flex gap-4 mt-2 font-mono-display text-xs flex-wrap">
+        {(
+          [
+            ["5m", signal.m5],
+            ["1h", signal.h1],
+            ["6h", signal.h6],
+            ["24h", signal.h24],
+          ] as const
+        ).map(([label, v]) => (
+          <span key={label}>
+            <span className="text-[var(--text-tertiary)]">{label} </span>
+            <span
+              style={{
+                color: v >= 0 ? "var(--signal-long)" : "var(--signal-short)",
+              }}
+            >
+              {v >= 0 ? "+" : ""}
+              {v.toFixed(1)}%
+            </span>
+          </span>
+        ))}
+        {signal.boosts > 0 && (
+          <span className="text-[var(--text-tertiary)]">
+            boosts <span className="text-[var(--text-primary)]">{signal.boosts}</span>
+          </span>
+        )}
       </div>
 
       {/* Trade plan — sized from the live challenge bankroll */}

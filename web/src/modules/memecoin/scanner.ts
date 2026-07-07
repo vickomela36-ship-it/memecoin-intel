@@ -1,6 +1,15 @@
-import type { DexPair, MemeScanResult, MemeSignal } from "@/types";
+import type { DexPair, MemeScanResult, MemeSignal, ScanPulse } from "@/types";
 import { bestSolanaPair, discoverTokens, fetchPairsBatch } from "./fetchers";
-import { LAUNCH_MIN, RECOVERY_MIN, scoreLaunch, scoreRecovery } from "./scoring";
+import {
+  LAUNCH_MIN,
+  MOMENTUM_MIN,
+  RECOVERY_MIN,
+  SURE2X_MIN,
+  scoreLaunch,
+  scoreMomentum,
+  scoreRecovery,
+  scoreSure2x,
+} from "./scoring";
 import { computeMoonshot } from "./moonshot";
 
 const HIGH_CAP_FDV = 5_000_000;
@@ -25,6 +34,7 @@ function buySellRatio(pair: DexPair): number {
 function baseSignal(
   pair: DexPair,
   mode: MemeSignal["mode"],
+  playType: string,
   ageHours: number,
   boosts: number,
   scored: {
@@ -35,8 +45,10 @@ function baseSignal(
   },
   sizingKey: string
 ): MemeSignal {
+  const t1h = pair.txns?.h1;
   return {
     mode,
+    playType,
     address: pair.baseToken?.address ?? "",
     symbol: pair.baseToken?.symbol ?? "?",
     name: pair.baseToken?.name ?? "?",
@@ -53,14 +65,13 @@ function baseSignal(
     buySellRatio: buySellRatio(pair),
     pairUrl: pair.url ?? "",
     boosts,
+    m5: num(pair.priceChange?.m5),
+    h1: num(pair.priceChange?.h1),
+    h6: num(pair.priceChange?.h6),
+    h24: num(pair.priceChange?.h24),
+    txns1h: num(t1h?.buys) + num(t1h?.sells),
     sizingKey,
   };
-}
-
-function recoveryGrade(score: number): { grade: string; sizingKey: string } {
-  if (score >= 80) return { grade: "A", sizingKey: "A" };
-  if (score >= 70) return { grade: "B", sizingKey: "B" };
-  return { grade: "C", sizingKey: "5x POTENTIAL" };
 }
 
 interface RugSummary {
@@ -68,16 +79,13 @@ interface RugSummary {
   risks?: { name?: string; level?: string }[];
 }
 
-/**
- * Rugcheck the top degen candidates; annotate warnings.
- * Server-side (the /api/scan route) hits rugcheck.xyz directly;
- * client-side falls back to our proxy route.
- */
+/** Rugcheck top risky candidates; annotate warnings. Server hits rugcheck
+ *  directly, client falls back to our proxy route. */
 async function annotateRugcheck(
   signals: MemeSignal[],
   server: boolean
 ): Promise<void> {
-  const targets = signals.slice(0, 8);
+  const targets = signals.slice(0, 10);
   await Promise.allSettled(
     targets.map(async (s) => {
       try {
@@ -109,11 +117,13 @@ async function annotateRugcheck(
 }
 
 /**
- * Full scan → four sections:
- *  - launches:   < 24h old, launch score 65+       (NEW LAUNCH gems)
- *  - recoveries: 7-90d low-cap (<$5M) drawdowns, 60+, graded A/B/C
- *  - higherCap:  $5M+ FDV dips with buy-side sentiment intact
- *  - degens:     moonshot-tiered risky plays (3x/5x/10x/100x)
+ * Full scan → the play ladder, safest to wildest:
+ *   sure2x     "2x GRINDER"      established + deep liq + bounce (70+)
+ *   recovery3x "3x RECOVERY"     deep-dip low-cap reversals (60+)
+ *   momentum   "MOMENTUM RIDER"  already running, volume accelerating (65+)
+ *   higherCap  "HIGHER-CAP"      $5M+ dips with sentiment intact (55+)
+ *   launches   "NEW LAUNCH"      <24h with real liquidity (65+)
+ *   degens     moonshot tiers    5x / 10x / 100x POTENTIAL (45+)
  */
 export async function runMemeScan(
   opts: { server?: boolean } = {}
@@ -122,11 +132,19 @@ export async function runMemeScan(
   const boostsMap = new Map(tokens.map((t) => [t.address, t.boosts]));
   const pairMap = await fetchPairsBatch(tokens.map((t) => t.address));
 
-  const launches: MemeSignal[] = [];
-  const recoveries: MemeSignal[] = [];
+  const sure2x: MemeSignal[] = [];
+  const recovery3x: MemeSignal[] = [];
+  const momentum: MemeSignal[] = [];
   const higherCap: MemeSignal[] = [];
+  const launches: MemeSignal[] = [];
   const degens: MemeSignal[] = [];
   const now = Date.now();
+
+  // Pulse accumulators
+  let analyzed = 0;
+  let green = 0;
+  let totalVol = 0;
+  const h24s: number[] = [];
 
   pairMap.forEach((pairs, address) => {
     const pair = bestSolanaPair(pairs);
@@ -135,64 +153,99 @@ export async function runMemeScan(
     const vol24 = num(pair.volume?.h24);
     if (liq < 3_000 || vol24 < 5_000) return; // dust filter
 
+    const h24 = num(pair.priceChange?.h24);
+    const h6 = num(pair.priceChange?.h6);
+    const h1 = num(pair.priceChange?.h1);
+    const m5 = num(pair.priceChange?.m5);
+    analyzed++;
+    if (h24 > 0) green++;
+    totalVol += vol24;
+    h24s.push(h24);
+
     const created = num(pair.pairCreatedAt);
     const ageHours = created > 0 ? (now - created) / 3_600_000 : -1;
     if (ageHours <= 0) return;
     const boosts = boostsMap.get(address) ?? 0;
     const fdv = num(pair.fdv);
-    const h6 = num(pair.priceChange?.h6);
-    const h24 = num(pair.priceChange?.h24);
+    const volH1 = num(pair.volume?.h1);
     const inDip = h24 < -8 || h6 < -5;
-    let surfaced = false;
+    const bsr = buySellRatio(pair);
 
-    // ── New launches ────────────────────────────────────────────────
+    // ── 1. New launches (<24h) ──────────────────────────────────────
     if (ageHours < 24) {
       const scored = scoreLaunch(pair, ageHours, boosts);
       if (scored.score >= LAUNCH_MIN) {
         launches.push(
-          baseSignal(pair, "LAUNCH", ageHours, boosts, scored, "10x RUNNER")
+          baseSignal(pair, "LAUNCH", "NEW LAUNCH", ageHours, boosts, scored, "10x RUNNER")
         );
-        surfaced = true;
+      }
+      return; // launches are their own universe
+    }
+
+    // ── 2. 2x GRINDER — highest-probability tier ────────────────────
+    if (
+      ageHours >= 14 * 24 &&
+      fdv >= 500_000 &&
+      fdv <= 25_000_000 &&
+      liq >= 25_000 &&
+      h24 > -35 &&
+      inDip
+    ) {
+      const scored = scoreSure2x(pair, ageHours);
+      if (scored.score >= SURE2X_MIN) {
+        sure2x.push(
+          baseSignal(pair, "SURE", "2x GRINDER", ageHours, boosts, scored, "A")
+        );
+        return;
       }
     }
 
-    // ── Higher-cap recovery ($5M+, sentiment intact) ────────────────
-    if (!surfaced && fdv >= HIGH_CAP_FDV && inDip && buySellRatio(pair) >= 1.0) {
+    // ── 3. Higher-cap recovery ($5M+) ───────────────────────────────
+    if (fdv >= HIGH_CAP_FDV && inDip && bsr >= 1.0) {
       const scored = scoreRecovery(pair, ageHours);
       if (scored.score >= 55) {
-        const g = recoveryGrade(scored.score);
-        const sig = baseSignal(pair, "HIGHER-CAP", ageHours, boosts, scored, "A");
-        sig.grade = g.grade;
-        higherCap.push(sig);
-        surfaced = true;
+        higherCap.push(
+          baseSignal(pair, "HIGHER-CAP", "HIGHER-CAP RECOVERY", ageHours, boosts, scored, "A")
+        );
+        return;
       }
     }
 
-    // ── Low-cap recovery (graded A/B/C) ─────────────────────────────
+    // ── 4. Momentum riders ──────────────────────────────────────────
+    const volAccelerating = volH1 > 0 && (volH1 * 24) > vol24 * 1.5;
+    if (h1 > 8 && m5 > -1 && volAccelerating) {
+      const scored = scoreMomentum(pair);
+      if (scored.score >= MOMENTUM_MIN) {
+        momentum.push(
+          baseSignal(pair, "MOMENTUM", "MOMENTUM RIDER", ageHours, boosts, scored, "5x POTENTIAL")
+        );
+        return;
+      }
+    }
+
+    // ── 5. 3x recovery — deep-dip low-cap reversals ─────────────────
     if (
-      !surfaced &&
       fdv < HIGH_CAP_FDV &&
-      ageHours >= 7 * 24 &&
-      ageHours <= 90 * 24 &&
-      (h24 < -15 || h6 < -10)
+      ageHours >= 3 * 24 &&
+      (h24 <= -30 || h6 <= -25)
     ) {
       const scored = scoreRecovery(pair, ageHours);
       if (scored.score >= RECOVERY_MIN) {
-        const g = recoveryGrade(scored.score);
-        const sig = baseSignal(pair, "RECOVERY", ageHours, boosts, scored, g.sizingKey);
-        sig.grade = g.grade;
-        recoveries.push(sig);
-        surfaced = true;
+        recovery3x.push(
+          baseSignal(pair, "RECOVERY", "3x RECOVERY", ageHours, boosts, scored, "B")
+        );
+        return;
       }
     }
 
-    // ── Degen moonshot plays (risky gems) ───────────────────────────
-    if (!surfaced && inDip) {
+    // ── 6. Degen moonshots ──────────────────────────────────────────
+    if (inDip) {
       const moon = computeMoonshot(pair);
       if (moon.total >= 45 && moon.tier !== "LOW POTENTIAL") {
         const sig = baseSignal(
           pair,
           "DEGEN",
+          moon.tier,
           ageHours,
           boosts,
           {
@@ -210,19 +263,36 @@ export async function runMemeScan(
     }
   });
 
-  launches.sort((a, b) => b.score - a.score);
-  recoveries.sort((a, b) => b.score - a.score);
-  higherCap.sort((a, b) => b.score - a.score);
-  degens.sort((a, b) => b.score - a.score);
+  const byScore = (a: MemeSignal, b: MemeSignal) => b.score - a.score;
+  sure2x.sort(byScore);
+  recovery3x.sort(byScore);
+  momentum.sort(byScore);
+  higherCap.sort(byScore);
+  launches.sort(byScore);
+  degens.sort(byScore);
 
-  const result: MemeScanResult = {
-    launches: launches.slice(0, 8),
-    recoveries: recoveries.slice(0, 8),
-    higherCap: higherCap.slice(0, 6),
-    degens: degens.slice(0, 10),
-    scanned: pairMap.size,
+  h24s.sort((a, b) => a - b);
+  const pulse: ScanPulse = {
+    discovered: tokens.length,
+    analyzed,
+    greenPct: analyzed > 0 ? Math.round((green / analyzed) * 100) : 0,
+    medianH24: h24s.length ? Number(h24s[Math.floor(h24s.length / 2)].toFixed(1)) : 0,
+    totalVol24hUsd: totalVol,
   };
 
-  await annotateRugcheck(result.degens, opts.server ?? false);
+  const result: MemeScanResult = {
+    pulse,
+    sure2x: sure2x.slice(0, 8),
+    recovery3x: recovery3x.slice(0, 8),
+    momentum: momentum.slice(0, 8),
+    higherCap: higherCap.slice(0, 6),
+    launches: launches.slice(0, 8),
+    degens: degens.slice(0, 10),
+  };
+
+  await annotateRugcheck(
+    [...result.degens, ...result.launches],
+    opts.server ?? false
+  );
   return result;
 }

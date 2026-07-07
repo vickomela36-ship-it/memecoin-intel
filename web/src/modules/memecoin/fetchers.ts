@@ -10,22 +10,40 @@ interface BoostEntry {
   amount?: number;
 }
 
-/** Discover candidate Solana token addresses from DexScreener boost + profile feeds. */
+/** Search queries that surface active Solana meme pairs beyond the boost feeds. */
+const SEARCH_QUERIES = [
+  "SOL", "PUMP", "MEME", "BONK", "WIF", "PEPE",
+  "DOGE", "CAT", "AI", "TRUMP", "MOON", "SOLANA",
+];
+
+/**
+ * Discover candidate Solana token addresses from DexScreener boost feeds,
+ * profile feed, AND search queries — several hundred candidates per scan.
+ */
 export async function discoverTokens(): Promise<
   { address: string; boosts: number }[]
 > {
-  const endpoints = [
+  const feedEndpoints = [
     `${DS}/token-boosts/top/v1`,
     `${DS}/token-boosts/latest/v1`,
     `${DS}/token-profiles/latest/v1`,
   ];
-  const results = await Promise.allSettled(
-    endpoints.map((u) => jsonFetcher<BoostEntry[]>(u))
-  );
+
+  const [feedResults, searchResults] = await Promise.all([
+    Promise.allSettled(feedEndpoints.map((u) => jsonFetcher<BoostEntry[]>(u))),
+    Promise.allSettled(
+      SEARCH_QUERIES.map((q) =>
+        jsonFetcher<{ pairs: DexPair[] | null }>(
+          `${DS}/latest/dex/search?q=${encodeURIComponent(q)}`
+        )
+      )
+    ),
+  ]);
 
   const seen = new Set<string>();
   const out: { address: string; boosts: number }[] = [];
-  for (const r of results) {
+
+  for (const r of feedResults) {
     if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
     for (const t of r.value) {
       const addr = t.tokenAddress;
@@ -36,7 +54,19 @@ export async function discoverTokens(): Promise<
       out.push({ address: addr, boosts: t.totalAmount ?? t.amount ?? 0 });
     }
   }
-  return out.slice(0, 60);
+
+  for (const r of searchResults) {
+    if (r.status !== "fulfilled") continue;
+    for (const p of r.value?.pairs ?? []) {
+      if (p.chainId !== "solana") continue;
+      const addr = p.baseToken?.address;
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      out.push({ address: addr, boosts: 0 });
+    }
+  }
+
+  return out.slice(0, 270); // 9 batches of 30 — wide but rate-friendly
 }
 
 /** Batch-fetch pair data — DexScreener accepts up to 30 comma-joined addresses. */

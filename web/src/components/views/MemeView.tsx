@@ -6,22 +6,26 @@ import SignalCard from "@/components/SignalCard";
 import AccuracyBadge from "@/components/AccuracyBadge";
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
-import { jsonFetcher, timeAgo } from "@/lib/utils";
+import { fmtUsd, jsonFetcher, timeAgo } from "@/lib/utils";
 import type { MemeScanResult, MemeSignal } from "@/types";
 
 const DAY = 24 * 3600 * 1000;
-// Hit multipliers by signal type — shown in the Track Record definitions
+// Hit multipliers by play type — shown in the Track Record definitions
 const HIT_MULT: Record<string, number> = {
-  launch: 1.5,
-  recovery: 1.2,
+  "sure-2x": 1.3,
+  "recovery-3x": 1.3,
+  momentum: 1.3,
   "higher-cap": 1.2,
+  launch: 1.5,
   degen: 1.5,
 };
 
 const LOG_TYPE: Record<MemeSignal["mode"], string> = {
-  LAUNCH: "launch",
-  RECOVERY: "recovery",
+  SURE: "sure-2x",
+  RECOVERY: "recovery-3x",
+  MOMENTUM: "momentum",
   "HIGHER-CAP": "higher-cap",
+  LAUNCH: "launch",
   DEGEN: "degen",
 };
 
@@ -41,20 +45,24 @@ export default function MemeView({
     {
       refreshInterval,
       keepPreviousData: true,
-    onErrorRetry: (_err, _key, _cfg, revalidate, { retryCount }) => {
-      if (retryCount >= 3) return;
-      setTimeout(() => revalidate({ retryCount }), 5000 * (retryCount + 1));
-    },
-  });
+      onErrorRetry: (_err, _key, _cfg, revalidate, { retryCount }) => {
+        if (retryCount >= 3) return;
+        setTimeout(() => revalidate({ retryCount }), 5000 * (retryCount + 1));
+      },
+    }
+  );
 
   const fetchedAt = useMemo(() => Date.now(), [data]);
-  const launches = data?.launches ?? [];
-  const recoveries = data?.recoveries ?? [];
+  const sure2x = data?.sure2x ?? [];
+  const recovery3x = data?.recovery3x ?? [];
+  const momentum = data?.momentum ?? [];
   const higherCap = data?.higherCap ?? [];
+  const launches = data?.launches ?? [];
   const degens = data?.degens ?? [];
+  const pulse = data?.pulse;
   const all = useMemo(
-    () => [...launches, ...recoveries, ...higherCap, ...degens],
-    [launches, recoveries, higherCap, degens]
+    () => [...sure2x, ...recovery3x, ...momentum, ...higherCap, ...launches, ...degens],
+    [sure2x, recovery3x, momentum, higherCap, launches, degens]
   );
 
   useEffect(() => {
@@ -73,7 +81,7 @@ export default function MemeView({
           target: s.address,
           direction: "bullish",
           score: s.score,
-          details: { symbol: s.symbol, fdv: s.fdv, tier: s.tier ?? null },
+          details: { symbol: s.symbol, fdv: s.fdv, playType: s.playType },
         },
         priceAtSignal: s.priceUsd,
       });
@@ -104,32 +112,61 @@ export default function MemeView({
     };
   }, [data, onLogged]);
 
+  const marketClr =
+    (pulse?.greenPct ?? 50) >= 55
+      ? "var(--signal-long)"
+      : (pulse?.greenPct ?? 50) <= 35
+        ? "var(--signal-short)"
+        : "var(--signal-neutral)";
+
   return (
     <div className="space-y-3">
-      <div className="card flex items-center justify-between flex-wrap gap-2">
-        <span className="font-mono-display text-sm text-[var(--text-secondary)]">
-          Active signals: {all.length} · scanned {data?.scanned ?? 0} tokens ·
-          launch 65+ / recovery 60+ / degen 45+
-        </span>
-        <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
-          {error
-            ? `⚠ DexScreener unreachable — last data ${timeAgo(fetchedAt)}`
-            : isLoading && !data
-              ? "scanning…"
-              : `updated ${timeAgo(fetchedAt)}`}
-        </span>
-      </div>
+      {/* ── Market pulse + scan stats (the Streamlit stats row) ────────── */}
+      {pulse && (
+        <div className="card">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="font-mono-display text-sm" style={{ color: marketClr }}>
+              MARKET PULSE: {pulse.greenPct}% green · median 24h{" "}
+              {pulse.medianH24 >= 0 ? "+" : ""}
+              {pulse.medianH24}% · {fmtUsd(pulse.totalVol24hUsd)} combined vol
+            </span>
+            <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
+              {error
+                ? `⚠ scan API unreachable — last data ${timeAgo(fetchedAt)}`
+                : isLoading && !data
+                  ? "scanning…"
+                  : `updated ${timeAgo(fetchedAt)}`}
+            </span>
+          </div>
+          <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mt-3">
+            <Stat label="Discovered" value={pulse.discovered} />
+            <Stat label="Analyzed" value={pulse.analyzed} />
+            <Stat label="2x Grind" value={sure2x.length} hot={sure2x.length > 0} />
+            <Stat label="3x Rec" value={recovery3x.length} />
+            <Stat label="Momentum" value={momentum.length} />
+            <Stat label="High-cap" value={higherCap.length} />
+            <Stat label="Launches" value={launches.length} />
+            <Stat label="Degen" value={degens.length} />
+          </div>
+        </div>
+      )}
 
       <Section
-        title={`NEW LAUNCHES (${launches.length})`}
-        caption="Under 24h old with real liquidity and buy pressure. Earliest entries, thinnest data."
-        signals={launches}
+        title={`SURE PLAYS — 2x GRINDERS (${sure2x.length})`}
+        caption="Highest-probability tier: established tokens, deep liquidity, buyers in control, bounce confirmed. Biggest size, smallest target — take the 1.5-2x and leave."
+        signals={sure2x}
         fetchedAt={fetchedAt}
       />
       <Section
-        title={`LOW-CAP RECOVERY (${recoveries.length})`}
-        caption="7-90 day tokens in a drawdown showing volume resurgence — graded A/B/C."
-        signals={recoveries}
+        title={`3x RECOVERY PLAYS (${recovery3x.length})`}
+        caption="Deep-dip low-caps (-30% or worse) showing volume resurgence and reversal structure."
+        signals={recovery3x}
+        fetchedAt={fetchedAt}
+      />
+      <Section
+        title={`MOMENTUM RIDERS (${momentum.length})`}
+        caption="Already running with volume accelerating. Freshness-scored — chasing extended moves is penalized."
+        signals={momentum}
         fetchedAt={fetchedAt}
       />
       <Section
@@ -139,8 +176,14 @@ export default function MemeView({
         fetchedAt={fetchedAt}
       />
       <Section
-        title={`DEGEN PLAYS — RISKY GEMS (${degens.length})`}
-        caption="Moonshot-tiered (3x / 5x / 10x / 100x potential). Rugchecked where possible. Only bet what you can lose."
+        title={`NEW LAUNCHES (${launches.length})`}
+        caption="Under 24h old with real liquidity and buy pressure. Earliest entries, thinnest data."
+        signals={launches}
+        fetchedAt={fetchedAt}
+      />
+      <Section
+        title={`DEGEN MOONSHOTS (${degens.length})`}
+        caption="5x / 10x / 100x POTENTIAL tiers. Rugchecked where possible. Only bet what you can lose — most go to zero."
         signals={degens}
         fetchedAt={fetchedAt}
       />
@@ -153,11 +196,38 @@ export default function MemeView({
       )}
       {error && all.length === 0 && (
         <div className="card text-sm text-[var(--signal-short)]">
-          DexScreener API unreachable. Retrying with backoff.
+          Scan API unreachable. Retrying with backoff.
         </div>
       )}
 
       <AccuracyBadge module="memecoin" />
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hot = false,
+}: {
+  label: string;
+  value: number;
+  hot?: boolean;
+}) {
+  return (
+    <div
+      className="rounded-input px-2 py-1.5 text-center"
+      style={{ background: "var(--bg-elevated)" }}
+    >
+      <div
+        className="font-mono-display text-lg tabular-nums"
+        style={{ color: hot ? "var(--signal-edge)" : undefined }}
+      >
+        {value}
+      </div>
+      <div className="text-xs text-[var(--text-tertiary)] font-mono-display uppercase">
+        {label}
+      </div>
     </div>
   );
 }
