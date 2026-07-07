@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Backgrounds */
+  --bg-primary: #0a0a0f;
+  --bg-surface: #12121a;
+  --bg-elevated: #1a1a25;
+  --bg-overlay: rgba(10, 10, 15, 0.85);
+
+  /* Text */
+  --text-primary: #e8e6e1;
+  --text-secondary: #8a8a95;
+  --text-tertiary: #4a4a55;
+
+  /* Signal colors */
+  --signal-long: #00e5a0;
+  --signal-short: #ff3b5c;
+  --signal-neutral: #ffb800;
+  --signal-edge: #7b61ff;
+
+  /* Accent */
+  --accent-primary: #7b61ff;
+  --accent-glow: rgba(123, 97, 255, 0.15);
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(123, 97, 255, 0.3);
+}
+
+html {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+body {
+  font-family: var(--font-inter), -apple-system, sans-serif;
+  font-size: 0.9375rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono-display {
+  font-family: var(--font-jetbrains), monospace;
+}
+
+/* Live pulse: subtle 2s breathing, not a blink */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.pulse-live {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+/* Signal strip segments */
+.strip-segment {
+  height: 3px;
+  flex: 1;
+  background: linear-gradient(90deg, #1a1a25, #22222e);
+  transition: background 0.6s ease;
+}
+.strip-meme {
+  background: linear-gradient(90deg, rgba(0, 229, 160, 0.25), var(--signal-long));
+}
+.strip-edge {
+  background: linear-gradient(90deg, rgba(123, 97, 255, 0.25), var(--signal-edge));
+}
+.strip-crypto {
+  background: linear-gradient(90deg, rgba(255, 184, 0, 0.25), var(--signal-neutral));
+}
+
+/* Edge glow — used SPARINGLY */
+.edge-glow {
+  box-shadow: 0 0 24px var(--accent-glow);
+  border-color: var(--border-active) !important;
+}
+
+/* Card baseline */
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+/* Compact data table */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.data-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.data-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+}
