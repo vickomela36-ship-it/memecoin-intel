@@ -71,6 +71,8 @@ function memeAlertLines(scan: Awaited<ReturnType<typeof cachedScan>>): string[] 
 
   for (const s of scan.sure2x) push(s, "2x GRINDER");
   for (const s of scan.momentum.filter((x) => x.score >= 75)) push(s, "MOMENTUM RIDER");
+  for (const s of scan.pumpfun.filter((x) => x.score >= 72)) push(s, "PUMPFUN RELEASE");
+  for (const s of scan.volumePlays.filter((x) => x.score >= 78)) push(s, "VOLUME PLAY");
   for (const s of scan.launches.filter((x) => x.score >= 75)) push(s, "HOT LAUNCH");
   for (const s of scan.degens.filter(
     (x) => (x.tier === "100x MOONSHOT" && x.score >= 80) || (x.tier === "10x RUNNER" && x.score >= 75)

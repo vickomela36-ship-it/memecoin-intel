@@ -16,7 +16,9 @@ const HIT_MULT: Record<string, number> = {
   "sure-2x": 1.3,
   "recovery-3x": 1.3,
   momentum: 1.3,
+  volume: 1.3,
   "higher-cap": 1.2,
+  pumpfun: 1.5,
   launch: 1.5,
   degen: 1.5,
 };
@@ -25,7 +27,9 @@ const LOG_TYPE: Record<MemeSignal["mode"], string> = {
   SURE: "sure-2x",
   RECOVERY: "recovery-3x",
   MOMENTUM: "momentum",
+  VOLUME: "volume",
   "HIGHER-CAP": "higher-cap",
+  PUMPFUN: "pumpfun",
   LAUNCH: "launch",
   DEGEN: "degen",
 };
@@ -57,13 +61,19 @@ export default function MemeView({
   const sure2x = data?.sure2x ?? [];
   const recovery3x = data?.recovery3x ?? [];
   const momentum = data?.momentum ?? [];
+  const volumePlays = data?.volumePlays ?? [];
   const higherCap = data?.higherCap ?? [];
+  const pumpfun = data?.pumpfun ?? [];
   const launches = data?.launches ?? [];
   const degens = data?.degens ?? [];
+  const metas = data?.metas ?? [];
   const pulse = data?.pulse;
   const all = useMemo(
-    () => [...sure2x, ...recovery3x, ...momentum, ...higherCap, ...launches, ...degens],
-    [sure2x, recovery3x, momentum, higherCap, launches, degens]
+    () => [
+      ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
+      ...higherCap, ...pumpfun, ...launches, ...degens,
+    ],
+    [sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
   );
 
   useEffect(() => {
@@ -139,15 +149,96 @@ export default function MemeView({
                   : `updated ${timeAgo(fetchedAt)}`}
             </span>
           </div>
-          <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mt-3">
-            <Stat label="Discovered" value={pulse.discovered} />
+          <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 mt-3">
+            <Stat label="Found" value={pulse.discovered} />
             <Stat label="Analyzed" value={pulse.analyzed} />
             <Stat label="2x Grind" value={sure2x.length} hot={sure2x.length > 0} />
             <Stat label="3x Rec" value={recovery3x.length} />
             <Stat label="Momentum" value={momentum.length} />
+            <Stat label="Volume" value={volumePlays.length} />
             <Stat label="High-cap" value={higherCap.length} />
-            <Stat label="Launches" value={launches.length} />
+            <Stat label="Pumpfun" value={pumpfun.length} hot={pumpfun.length > 0} />
+            <Stat label="Launch" value={launches.length} />
             <Stat label="Degen" value={degens.length} />
+          </div>
+        </div>
+      )}
+
+      {/* ── META OF THE DAY — which narrative is running ─────────────── */}
+      {metas.length > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+            <h2 className="font-mono-display text-lg">META OF THE DAY</h2>
+            <span
+              className="font-mono-display text-sm pulse-live"
+              style={{ color: "var(--signal-edge)" }}
+            >
+              {metas[0].name} — {metas[0].greenPct}% green, median{" "}
+              {metas[0].medianH24 >= 0 ? "+" : ""}
+              {metas[0].medianH24}%
+            </span>
+          </div>
+          <p className="text-xs text-[var(--text-tertiary)] mb-2">
+            Narratives ranked by breadth and median 24h move across all{" "}
+            {pulse?.analyzed ?? 0} analyzed tokens. Trade the meta, not the
+            straggler — money rotates by narrative.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Narrative</th>
+                  <th>Tokens</th>
+                  <th>% Green</th>
+                  <th>Median 24h</th>
+                  <th>24h Volume</th>
+                  <th>Leaders</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metas.map((m, i) => (
+                  <tr key={m.name}>
+                    <td
+                      className="font-mono-display"
+                      style={{ color: i === 0 ? "var(--signal-edge)" : undefined }}
+                    >
+                      {i === 0 ? "🔥 " : ""}
+                      {m.name}
+                    </td>
+                    <td className="font-mono-display">{m.tokens}</td>
+                    <td
+                      className="font-mono-display"
+                      style={{
+                        color:
+                          m.greenPct >= 55
+                            ? "var(--signal-long)"
+                            : m.greenPct <= 35
+                              ? "var(--signal-short)"
+                              : undefined,
+                      }}
+                    >
+                      {m.greenPct}%
+                    </td>
+                    <td
+                      className="font-mono-display"
+                      style={{
+                        color:
+                          m.medianH24 >= 0
+                            ? "var(--signal-long)"
+                            : "var(--signal-short)",
+                      }}
+                    >
+                      {m.medianH24 >= 0 ? "+" : ""}
+                      {m.medianH24}%
+                    </td>
+                    <td className="font-mono-display">{fmtUsd(m.totalVolUsd)}</td>
+                    <td className="font-mono-display text-[var(--text-secondary)]">
+                      {m.topSymbols.map((s) => `$${s}`).join(" ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -158,7 +249,8 @@ export default function MemeView({
           signals={[
             ...sure2x.slice(0, 2),
             ...momentum.slice(0, 2),
-            ...recovery3x.slice(0, 2),
+            ...pumpfun.slice(0, 1),
+            ...recovery3x.slice(0, 1),
             ...launches.slice(0, 1),
             ...degens.slice(0, 1),
           ]}
@@ -184,9 +276,21 @@ export default function MemeView({
         fetchedAt={fetchedAt}
       />
       <Section
+        title={`VOLUME PLAYS (${volumePlays.length})`}
+        caption="Outsized turnover vs market cap with volume still building. Where the crowd concentrates, moves follow — confirm direction on the 5m first."
+        signals={volumePlays}
+        fetchedAt={fetchedAt}
+      />
+      <Section
         title={`HIGHER-CAP RECOVERY — $5M+ (${higherCap.length})`}
         caption="Established tokens dipping with buy-side sentiment intact. Core-play material."
         signals={higherCap}
+        fetchedAt={fetchedAt}
+      />
+      <Section
+        title={`PUMP.FUN RELEASES (${pumpfun.length})`}
+        caption="Fresh pump.fun tokens (<48h) with buyers in control and momentum — rugcheck DANGER tokens are filtered out of this section entirely."
+        signals={pumpfun}
         fetchedAt={fetchedAt}
       />
       <Section

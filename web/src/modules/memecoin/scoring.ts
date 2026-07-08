@@ -328,3 +328,74 @@ export function scoreMomentum(
 
   return { score: clamp(score), components, reasons, warnings };
 }
+
+
+export const VOLUME_MIN = 65;
+
+/**
+ * "VOLUME PLAY" — outsized turnover relative to market cap. Where volume
+ * concentrates, moves follow. Direction-agnostic on its own, so buy
+ * pressure and short-frame action decide whether it's worth taking.
+ */
+export function scoreVolume(
+  pair: DexPair
+): { score: number; components: ScoreComponent[]; reasons: string[]; warnings: string[] } {
+  const vol24 = num(pair.volume?.h24);
+  const volH1 = num(pair.volume?.h1);
+  const liq = num(pair.liquidity?.usd);
+  const fdv = num(pair.fdv);
+  const ratio = buySellRatio(pair);
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  const components: ScoreComponent[] = [];
+
+  // Turnover: 24h volume vs market cap (35)
+  const turnover = fdv > 0 ? vol24 / fdv : 0;
+  let turnScore: number;
+  if (turnover >= 3) turnScore = 100;
+  else if (turnover >= 2) turnScore = 85;
+  else if (turnover >= 1.5) turnScore = 70;
+  else if (turnover >= 1) turnScore = 50;
+  else turnScore = 25;
+  if (turnover >= 2) reasons.push(`Turnover ${turnover.toFixed(1)}x market cap in 24h — the crowd is HERE`);
+  components.push({ name: "Turnover (vol/mcap)", weightPct: 35, score: turnScore, detail: `${turnover.toFixed(2)}x` });
+
+  // Hourly pace vs 24h average (30)
+  const hourlyRatio = vol24 > 0 && volH1 > 0 ? (volH1 * 24) / vol24 : 0;
+  let paceScore: number;
+  if (hourlyRatio >= 3) paceScore = 100;
+  else if (hourlyRatio >= 2) paceScore = 80;
+  else if (hourlyRatio >= 1.5) paceScore = 60;
+  else paceScore = 30;
+  if (hourlyRatio >= 2) reasons.push(`Volume still building: ${hourlyRatio.toFixed(1)}x the 24h pace`);
+  components.push({ name: "Hourly pace", weightPct: 30, score: paceScore, detail: `${hourlyRatio.toFixed(1)}x vs 24h avg` });
+
+  // Buy pressure decides direction (20)
+  let bpScore: number;
+  if (ratio >= 1.8) bpScore = 100;
+  else if (ratio >= 1.3) bpScore = 70;
+  else if (ratio >= 1.0) bpScore = 45;
+  else bpScore = 15;
+  components.push({ name: "Buy pressure", weightPct: 20, score: bpScore, detail: `${ratio.toFixed(1)}x buys/sells` });
+
+  // Liquidity floor (15)
+  let liqScore: number;
+  if (liq >= 50_000) liqScore = 90;
+  else if (liq >= 20_000) liqScore = 70;
+  else if (liq >= 10_000) liqScore = 45;
+  else liqScore = 15;
+  components.push({ name: "Liquidity", weightPct: 15, score: liqScore, detail: `$${(liq / 1000).toFixed(0)}K` });
+
+  let score = components.reduce((a, c) => a + c.score * (c.weightPct / 100), 0);
+  if (ratio < 1.0) {
+    score -= 10;
+    warnings.push("Sellers dominate the volume — this churn may be distribution, not accumulation");
+  }
+  if (fdv > 0 && liq > 0 && liq / fdv < 0.02) {
+    score -= 15;
+    warnings.push(`Exit trap: liquidity only ${((liq / fdv) * 100).toFixed(1)}% of FDV`);
+  }
+  warnings.push("High volume cuts both ways. Confirm direction on the 5m before entry.");
+
+  return { score: clamp(score), components, reasons, warnings };
+}

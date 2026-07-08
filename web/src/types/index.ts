@@ -46,6 +46,7 @@ export interface ModuleAccuracy {
 
 export interface DexPair {
   chainId: string;
+  dexId?: string;
   pairAddress: string;
   url?: string;
   baseToken?: { address: string; symbol: string; name: string };
@@ -59,7 +60,15 @@ export interface DexPair {
 }
 
 export interface MemeSignal {
-  mode: "LAUNCH" | "RECOVERY" | "HIGHER-CAP" | "DEGEN" | "SURE" | "MOMENTUM";
+  mode:
+    | "LAUNCH"
+    | "RECOVERY"
+    | "HIGHER-CAP"
+    | "DEGEN"
+    | "SURE"
+    | "MOMENTUM"
+    | "PUMPFUN"
+    | "VOLUME";
   /** Human category, e.g. "2x GRINDER", "3x RECOVERY", "MOMENTUM RIDER" */
   playType: string;
   address: string;
@@ -100,12 +109,24 @@ export interface ScanPulse {
   totalVol24hUsd: number;
 }
 
+export interface NarrativeIntel {
+  name: string;
+  tokens: number;
+  greenPct: number;
+  medianH24: number;
+  totalVolUsd: number;
+  topSymbols: string[];
+}
+
 export interface MemeScanResult {
   pulse: ScanPulse;
+  metas: NarrativeIntel[];
   sure2x: MemeSignal[];
   recovery3x: MemeSignal[];
   momentum: MemeSignal[];
+  volumePlays: MemeSignal[];
   higherCap: MemeSignal[];
+  pumpfun: MemeSignal[];
   launches: MemeSignal[];
   degens: MemeSignal[];
 }

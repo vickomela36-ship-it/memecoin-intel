@@ -11,7 +11,9 @@ const MODE_COLOR: Record<MemeSignal["mode"], string> = {
   SURE: "var(--signal-long)",
   RECOVERY: "var(--signal-neutral)",
   MOMENTUM: "var(--signal-neutral)",
+  VOLUME: "var(--signal-neutral)",
   "HIGHER-CAP": "var(--signal-long)",
+  PUMPFUN: "var(--signal-edge)",
   LAUNCH: "var(--signal-long)",
   DEGEN: "var(--signal-short)",
 };
