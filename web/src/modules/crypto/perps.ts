@@ -3,7 +3,7 @@
 // Called CLIENT-SIDE on purpose: both exchanges geo-block datacenter IPs
 // (where Vercel functions run) but allow browser CORS.
 
-import type { PerpComponent, PerpTicket } from "@/types";
+import type { PerpComponent, PerpTicket, WhalePrints } from "@/types";
 
 const BINANCE = "https://fapi.binance.com";
 const BYBIT = "https://api.bybit.com";
@@ -358,18 +358,93 @@ function buildTicket(display: string, symbol: string, raw: RawPerp): PerpTicket 
     oiChange24hPct: oi === null ? 0 : Number(oi.toFixed(1)),
     squeezeWatch,
     warnings,
+    whale: null,
   };
+}
+
+// ── Whale prints: large aggressive trades on the perp book ───────────────
+
+/** Notional threshold per symbol for a trade to count as a whale print. */
+function whaleThreshold(display: string): number {
+  if (display === "BTC" || display === "ETH") return 250_000;
+  return 50_000;
+}
+
+async function fetchBinanceWhales(
+  symbol: string,
+  thresholdUsd: number
+): Promise<WhalePrints | null> {
+  try {
+    const trades = await get<{ p: string; q: string; m: boolean; T: number }[]>(
+      `${BINANCE}/fapi/v1/aggTrades?symbol=${symbol}&limit=1000`
+    );
+    if (!trades.length) return null;
+    let buy = 0, sell = 0, largest = 0, count = 0;
+    for (const t of trades) {
+      const usd = num(t.p) * num(t.q);
+      if (usd < thresholdUsd) continue;
+      count++;
+      largest = Math.max(largest, usd);
+      // m=true → buyer was maker → taker SOLD aggressively
+      if (t.m) sell += usd;
+      else buy += usd;
+    }
+    const windowMin = Math.max(
+      1,
+      Math.round((trades[trades.length - 1].T - trades[0].T) / 60_000)
+    );
+    return { buyUsd: buy, sellUsd: sell, netUsd: buy - sell, largestUsd: largest, count, windowMin, thresholdUsd };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchBybitWhales(
+  symbol: string,
+  thresholdUsd: number
+): Promise<WhalePrints | null> {
+  try {
+    const data = await get<BybitList<{ price: string; size: string; side: string; time: string }>>(
+      `${BYBIT}/v5/market/recent-trade?category=linear&symbol=${symbol}&limit=1000`
+    );
+    const trades = data.result?.list ?? [];
+    if (!trades.length) return null;
+    let buy = 0, sell = 0, largest = 0, count = 0;
+    let minT = Infinity, maxT = 0;
+    for (const t of trades) {
+      const usd = num(t.price) * num(t.size);
+      const ts = num(t.time);
+      minT = Math.min(minT, ts);
+      maxT = Math.max(maxT, ts);
+      if (usd < thresholdUsd) continue;
+      count++;
+      largest = Math.max(largest, usd);
+      if (t.side === "Buy") buy += usd;
+      else sell += usd;
+    }
+    const windowMin = Math.max(1, Math.round((maxT - minT) / 60_000));
+    return { buyUsd: buy, sellUsd: sell, netUsd: buy - sell, largestUsd: largest, count, windowMin, thresholdUsd };
+  } catch {
+    return null;
+  }
 }
 
 export async function buildPerpTicket(
   symbol: string,
   display: string
 ): Promise<PerpTicket> {
+  const threshold = whaleThreshold(display);
   try {
-    return buildTicket(display, symbol, await fetchBinance(symbol));
+    const raw = await fetchBinance(symbol);
+    const ticket = buildTicket(display, symbol, raw);
+    ticket.whale = await fetchBinanceWhales(symbol, threshold);
+    return ticket;
   } catch {
     // Binance blocked or down — Bybit fallback
-    return buildTicket(display, symbol, await fetchBybit(symbol));
+    const raw = await fetchBybit(symbol);
+    const ticket = buildTicket(display, symbol, raw);
+    ticket.whale = await fetchBybitWhales(symbol, threshold);
+    return ticket;
   }
 }
 

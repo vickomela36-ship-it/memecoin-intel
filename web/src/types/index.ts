@@ -158,6 +158,34 @@ export interface MatchEdge {
   hasStrong: boolean;
 }
 
+// ── Whale / insider intel ─────────────────────────────────────────────────
+
+export interface WhaleTokenIntel {
+  address: string;
+  symbol: string;
+  top1Pct: number | null;
+  top5Pct: number | null;
+  top10Pct: number | null;
+  holdersSampled: number;
+  whaleBuyUsd: number | null;
+  whaleSellUsd: number | null;
+  netUsd: number | null;
+  largestTradeUsd: number | null;
+  tradesSampled: number;
+  flags: string[];
+}
+
+/** Large aggressive trades on the perp book. */
+export interface WhalePrints {
+  buyUsd: number;
+  sellUsd: number;
+  netUsd: number;
+  largestUsd: number;
+  count: number;
+  windowMin: number;
+  thresholdUsd: number;
+}
+
 // ── Perp Desk ─────────────────────────────────────────────────────────────
 
 /** Component score is -100 (max short) .. +100 (max long). */
@@ -192,6 +220,7 @@ export interface PerpTicket {
   oiChange24hPct: number;
   squeezeWatch: string | null;
   warnings: string[];
+  whale: WhalePrints | null;
 }
 
 // ── Crypto ────────────────────────────────────────────────────────────────

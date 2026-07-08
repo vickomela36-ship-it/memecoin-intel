@@ -109,6 +109,45 @@ export default function PerpTicketCard({ ticket }: { ticket: PerpTicket }) {
         </div>
       )}
 
+      {/* Whale prints */}
+      {ticket.whale && ticket.whale.count > 0 && (
+        <div
+          className="mt-2 px-3 py-1.5 rounded-input text-xs font-mono-display"
+          style={{
+            background: "var(--bg-elevated)",
+            borderLeft: `3px solid ${
+              ticket.whale.netUsd >= 0 ? "var(--signal-long)" : "var(--signal-short)"
+            }`,
+          }}
+        >
+          <span className="text-[var(--text-secondary)]">
+            WHALE PRINTS ({ticket.whale.count} trades ≥ $
+            {(ticket.whale.thresholdUsd / 1000).toFixed(0)}K, last ~
+            {ticket.whale.windowMin}m):
+          </span>{" "}
+          <span style={{ color: "var(--signal-long)" }}>
+            buys ${(ticket.whale.buyUsd / 1e6).toFixed(2)}M
+          </span>{" "}
+          ·{" "}
+          <span style={{ color: "var(--signal-short)" }}>
+            sells ${(ticket.whale.sellUsd / 1e6).toFixed(2)}M
+          </span>{" "}
+          ·{" "}
+          <span
+            style={{
+              color:
+                ticket.whale.netUsd >= 0
+                  ? "var(--signal-long)"
+                  : "var(--signal-short)",
+            }}
+          >
+            net {ticket.whale.netUsd >= 0 ? "+" : "-"}$
+            {(Math.abs(ticket.whale.netUsd) / 1e6).toFixed(2)}M
+          </span>{" "}
+          · largest ${(ticket.whale.largestUsd / 1e6).toFixed(2)}M
+        </div>
+      )}
+
       {/* Funding line */}
       <div className="flex items-center justify-between mt-2 text-xs font-mono-display flex-wrap gap-1">
         <span className="text-[var(--text-secondary)]">

@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import useSWR from "swr";
 import SignalCard from "@/components/SignalCard";
+import WhaleWatch from "@/components/WhaleWatch";
 import AccuracyBadge from "@/components/AccuracyBadge";
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
@@ -149,6 +150,19 @@ export default function MemeView({
             <Stat label="Degen" value={degens.length} />
           </div>
         </div>
+      )}
+
+      {/* Whale / insider layer for the strongest signals */}
+      {all.length > 0 && (
+        <WhaleWatch
+          signals={[
+            ...sure2x.slice(0, 2),
+            ...momentum.slice(0, 2),
+            ...recovery3x.slice(0, 2),
+            ...launches.slice(0, 1),
+            ...degens.slice(0, 1),
+          ]}
+        />
       )}
 
       <Section
