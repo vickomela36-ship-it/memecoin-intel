@@ -2,7 +2,7 @@
 
 export type ModuleId = "memecoin" | "football" | "crypto";
 
-export type TabId = ModuleId | "challenge" | "portfolio";
+export type TabId = ModuleId | "confluence" | "challenge" | "portfolio";
 
 export interface ScoreComponent {
   name: string;

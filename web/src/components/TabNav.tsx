@@ -5,6 +5,7 @@ import type { TabId } from "@/types";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "memecoin", label: "MEMECOINS" },
+  { id: "confluence", label: "CONFLUENCE" },
   { id: "challenge", label: "CHALLENGE" },
   { id: "portfolio", label: "PORTFOLIO" },
   { id: "football", label: "FOOTBALL" },

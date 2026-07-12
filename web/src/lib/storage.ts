@@ -9,6 +9,10 @@ export interface WatchItem {
   grade: string;
   pairUrl: string;
   addedAt: number;
+  /** Best multiple vs entry ever OBSERVED (updated whenever prices refresh) */
+  peakMultiple?: number;
+  /** When that peak was observed */
+  peakAt?: number | null;
 }
 
 export interface TradeEntry {
@@ -94,6 +98,29 @@ export function removeWatch(address: string) {
     WATCH_KEY,
     getWatchlist().filter((w) => w.address !== address)
   );
+}
+
+/**
+ * Update peak multiples from a fresh price snapshot. The peak survives
+ * forever — a token that hit 3x and round-tripped to zero still shows the
+ * 3x and how long it took to get there.
+ */
+export function updateWatchPeaks(prices: Map<string, number>): WatchItem[] {
+  const list = getWatchlist();
+  let changed = false;
+  const now = Date.now();
+  for (const w of list) {
+    const price = prices.get(w.address);
+    if (!price || w.entryPrice <= 0) continue;
+    const mult = price / w.entryPrice;
+    if (mult > (w.peakMultiple ?? 1)) {
+      w.peakMultiple = Number(mult.toFixed(3));
+      w.peakAt = now;
+      changed = true;
+    }
+  }
+  if (changed) write(WATCH_KEY, list);
+  return list;
 }
 
 // ── Challenge ─────────────────────────────────────────────────────────────

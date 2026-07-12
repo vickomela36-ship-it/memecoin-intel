@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getChallenge,
   getWatchlist,
   removeWatch,
+  updateWatchPeaks,
   type WatchItem,
 } from "@/lib/storage";
 import { bestSolanaPair, fetchPairsBatch } from "@/modules/memecoin/fetchers";
@@ -15,36 +16,62 @@ interface LivePrice {
   h24: number;
 }
 
+/** "2h 14m", "3d 5h" — duration between two timestamps. */
+function fmtDuration(fromMs: number, toMs: number): string {
+  const s = Math.max(0, (toMs - fromMs) / 1000);
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
 export default function PortfolioView() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>(() => getWatchlist());
   const [live, setLive] = useState<Map<string, LivePrice>>(new Map());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  const refreshingRef = useRef(false);
 
   const challenge = getChallenge();
   const trades = challenge.trades;
   const wins = trades.filter((t) => t.pnl > 0).length;
   const totalPnl = trades.reduce((a, t) => a + t.pnl, 0);
 
-  async function refreshPrices() {
-    if (!watchlist.length || refreshing) return;
+  const refreshPrices = useCallback(async () => {
+    const list = getWatchlist();
+    if (!list.length || refreshingRef.current) return;
+    refreshingRef.current = true;
     setRefreshing(true);
     try {
-      const map = await fetchPairsBatch(watchlist.map((w) => w.address));
+      const map = await fetchPairsBatch(list.map((w) => w.address));
       const next = new Map<string, LivePrice>();
+      const priceOnly = new Map<string, number>();
       map.forEach((pairs, addr) => {
         const best = bestSolanaPair(pairs);
         if (!best) return;
         const price = Number(best.priceUsd) || 0;
         const h24 = Number(best.priceChange?.h24) || 0;
-        if (price > 0) next.set(addr, { price, h24 });
+        if (price > 0) {
+          next.set(addr, { price, h24 });
+          priceOnly.set(addr, price);
+        }
       });
       setLive(next);
+      // Record any new peak-multiples permanently
+      setWatchlist(updateWatchPeaks(priceOnly));
       setRefreshedAt(Date.now());
     } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
-  }
+  }, []);
+
+  // Auto-refresh on mount and every 60s while this tab is open —
+  // more observations = better peak capture.
+  useEffect(() => {
+    refreshPrices();
+    const id = setInterval(refreshPrices, 60_000);
+    return () => clearInterval(id);
+  }, [refreshPrices]);
 
   function handleRemove(address: string) {
     removeWatch(address);
@@ -86,7 +113,7 @@ export default function PortfolioView() {
               <thead>
                 <tr>
                   <th>Token</th><th>Tier</th><th>Entry</th><th>Current</th>
-                  <th>PnL</th><th>→ 2x</th><th></th>
+                  <th>PnL</th><th>Peak hit</th><th>Time to peak</th><th>→ 2x</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -99,6 +126,8 @@ export default function PortfolioView() {
                   const prog = cur !== null && w.target2x > 0
                     ? Math.min(100, (cur / w.target2x) * 100)
                     : null;
+                  const peak = w.peakMultiple ?? null;
+                  const peakPct = peak !== null ? (peak - 1) * 100 : null;
                   return (
                     <tr key={w.address}>
                       <td>
@@ -129,6 +158,26 @@ export default function PortfolioView() {
                       >
                         {chg !== null ? `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%` : "—"}
                       </td>
+                      <td
+                        className="font-mono-display"
+                        style={{
+                          color:
+                            peak !== null && peak >= 2
+                              ? "var(--signal-edge)"
+                              : peak !== null && peak > 1.05
+                                ? "var(--signal-long)"
+                                : "var(--text-tertiary)",
+                        }}
+                      >
+                        {peak !== null && peak > 1
+                          ? `${peak.toFixed(2)}x (${peakPct! >= 0 ? "+" : ""}${peakPct!.toFixed(0)}%)`
+                          : "—"}
+                      </td>
+                      <td className="font-mono-display text-[var(--text-secondary)]">
+                        {peak !== null && peak > 1.05 && w.peakAt
+                          ? fmtDuration(w.addedAt, w.peakAt)
+                          : "—"}
+                      </td>
                       <td>
                         {prog !== null ? (
                           <div className="w-20 h-1.5 rounded-sm bg-[var(--bg-elevated)] overflow-hidden">
@@ -154,6 +203,12 @@ export default function PortfolioView() {
                 })}
               </tbody>
             </table>
+            <p className="text-xs text-[var(--text-tertiary)] mt-2">
+              Peak = best multiple observed since you added the token —
+              it never resets, even if price round-trips. Peaks are sampled
+              when prices refresh (every 60s while this tab is open), so
+              spikes between checks can be missed.
+            </p>
           </div>
         )}
       </div>

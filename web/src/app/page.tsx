@@ -14,6 +14,7 @@ import MemeView from "@/components/views/MemeView";
 import FootballView from "@/components/views/FootballView";
 import ChallengeView from "@/components/views/ChallengeView";
 import PortfolioView from "@/components/views/PortfolioView";
+import ConfluenceView from "@/components/views/ConfluenceView";
 import type { TabId } from "@/types";
 
 export default function Home() {
@@ -88,6 +89,7 @@ export default function Home() {
             onLogged={onLogged}
           />
         </div>
+        {tab === "confluence" && <ConfluenceView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
       </div>
