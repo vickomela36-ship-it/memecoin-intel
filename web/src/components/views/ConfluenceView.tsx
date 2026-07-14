@@ -6,6 +6,12 @@ import { cx, fmtPrice, fmtUsd, jsonFetcher, timeAgo } from "@/lib/utils";
 import { addWatch } from "@/lib/storage";
 import type { MemeScanResult, MemeSignal } from "@/types";
 
+interface HorizonProjection {
+  hours: number;
+  upsidePct: number; // projected possible upside over this horizon
+  prob: number; // est. probability of reaching it
+}
+
 interface ConfluenceRow {
   address: string;
   symbol: string;
@@ -17,10 +23,11 @@ interface ConfluenceRow {
   categories: { playType: string; score: number; sizingKey: string }[];
   avgScore: number;
   confluenceScore: number;
-  p30: number; // est. probability of +30% in 24h
+  horizons: HorizonProjection[];
   p2x: number;
   p5x: number;
   upsideBand: string;
+  drivers: string;
   warnings: string[];
 }
 
@@ -37,25 +44,83 @@ const TIER_TARGET: Record<string, number> = {
 const HIGH_OCTANE = new Set(["10x RUNNER", "100x MOONSHOT", "NEW LAUNCH", "PUMPFUN RELEASE"]);
 
 /**
- * Estimated upside probabilities. These are heuristic priors derived from
- * signal scores and category overlap — NOT measured frequencies. The Track
- * Record panel measures reality; these get recalibrated against it.
+ * Indicator-and-sentiment-driven horizon projections (1h / 4h / 8h / 24h).
+ *
+ * Drift comes from blended momentum velocity (1h move weighted heaviest,
+ * then 6h and 24h pace), scaled by sentiment (buy/sell ratio) and volume
+ * acceleration, compounding sub-linearly (momentum decays: h^0.75), and
+ * capped by the category target band. Heuristic priors, NOT measured
+ * frequencies — the Track Record panel is what verifies them.
  */
 function estimate(rows: MemeSignal[]): Omit<ConfluenceRow, "address" | "symbol" | "name" | "priceUsd" | "fdv" | "liquidity" | "pairUrl" | "warnings"> {
   const avgScore = rows.reduce((a, s) => a + s.score, 0) / rows.length;
   const confluenceScore = Math.min(100, avgScore + 8 * (rows.length - 1));
-
   const octane = rows.some((s) => HIGH_OCTANE.has(s.playType));
-  const p30 = Math.round(Math.min(80, Math.max(10, 15 + confluenceScore * 0.5)));
-  const p2x = Math.round(p30 * (octane ? 0.5 : 0.35));
+  const first = rows[0];
+
+  // ── Indicators ─────────────────────────────────────────────────────
+  // Momentum velocity in %/hour, recent frames weighted heaviest
+  const drift =
+    0.45 * first.h1 + 0.35 * (first.h6 / 6) + 0.2 * (first.h24 / 24);
+
+  // Sentiment multiplier from buy/sell pressure
+  const bsr = first.buySellRatio;
+  const sentMult = bsr >= 2 ? 1.3 : bsr >= 1.5 ? 1.15 : bsr >= 1 ? 1.0 : 0.7;
+
+  // Volume acceleration multiplier (hourly pace vs 24h average)
+  const volAccel =
+    first.vol24h > 0 && first.volH1 > 0
+      ? (first.volH1 * 24) / first.vol24h
+      : 1;
+  const volMult = volAccel >= 2 ? 1.25 : volAccel >= 1.5 ? 1.1 : volAccel >= 0.8 ? 1.0 : 0.85;
+
+  // Confluence bonus: independent setups agreeing
+  const confMult = 1 + 0.06 * (rows.length - 1);
+
+  const maxTarget = Math.max(...rows.map((s) => TIER_TARGET[s.sizingKey] ?? 2));
+  const minTarget = Math.min(...rows.map((s) => TIER_TARGET[s.sizingKey] ?? 2));
+
+  // Volatility floor: even with flat drift, these tokens swing — bounce
+  // potential from average absolute hourly range
+  const volatilityPerH = Math.max(
+    Math.abs(first.h1),
+    Math.abs(first.h6) / 6,
+    Math.abs(first.h24) / 24,
+    1.5
+  );
+
+  const pBase = Math.min(80, Math.max(10, 15 + confluenceScore * 0.5));
+
+  const horizons: HorizonProjection[] = [1, 4, 8, 24].map((h) => {
+    // Momentum-driven projection with sub-linear persistence
+    const momentumUp = Math.max(0, drift) * sentMult * volMult * confMult * Math.pow(h, 0.75);
+    // Volatility bounce floor (mean-reversion potential when drift is flat/negative)
+    const bounceUp = volatilityPerH * 0.5 * Math.pow(h, 0.5);
+    let upside = Math.max(momentumUp, bounceUp);
+    // Cap by the category band, scaled down for shorter horizons
+    const capPct = (maxTarget * 100 - 100) * Math.min(1, h / 24 + 0.15);
+    upside = Math.min(upside, capPct);
+
+    // Probability: base from confluence, discounted on short horizons,
+    // nudged by sentiment
+    let prob = pBase * (0.55 + 0.45 * Math.pow(h / 24, 0.35));
+    if (bsr >= 1.5) prob += h <= 4 ? 6 : 3;
+    if (drift <= 0 && h <= 4) prob -= 8; // fighting the tape short-term
+    prob = Math.min(85, Math.max(5, prob));
+
+    return { hours: h, upsidePct: Math.round(upside), prob: Math.round(prob) };
+  });
+
+  const p30_24h = horizons[3].prob;
+  const p2x = Math.round(p30_24h * (octane ? 0.5 : 0.35));
   const p5x = Math.round(p2x * (octane ? 0.4 : 0.2));
 
-  const maxTarget = Math.max(
-    ...rows.map((s) => TIER_TARGET[s.sizingKey] ?? 2)
-  );
-  const minTarget = Math.min(
-    ...rows.map((s) => TIER_TARGET[s.sizingKey] ?? 2)
-  );
+  const drivers =
+    `1h ${first.h1 >= 0 ? "+" : ""}${first.h1.toFixed(1)}% · ` +
+    `6h ${first.h6 >= 0 ? "+" : ""}${first.h6.toFixed(0)}% · ` +
+    `B/S ${bsr.toFixed(1)}x (${sentMult > 1 ? "bullish" : sentMult < 1 ? "bearish" : "neutral"} sentiment) · ` +
+    `vol pace ${volAccel.toFixed(1)}x (${volMult > 1 ? "accelerating" : volMult < 1 ? "fading" : "steady"}) · ` +
+    `×${rows.length} confluence`;
 
   return {
     categories: rows.map((s) => ({
@@ -65,10 +130,11 @@ function estimate(rows: MemeSignal[]): Omit<ConfluenceRow, "address" | "symbol" 
     })),
     avgScore: Math.round(avgScore),
     confluenceScore: Math.round(confluenceScore),
-    p30,
+    horizons,
     p2x,
     p5x,
     upsideBand: minTarget === maxTarget ? `~${maxTarget}x` : `${minTarget}x–${maxTarget}x`,
+    drivers,
   };
 }
 
@@ -198,18 +264,51 @@ export default function ConfluenceView() {
               </span>
             </div>
 
-            {/* Estimated upside strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-              <Odds label="+30% in 24h" pct={r.p30} />
-              <Odds label="2x" pct={r.p2x} />
-              <Odds label="5x" pct={r.p5x} />
-              <div className="rounded-input px-2 py-1.5 text-center" style={{ background: "var(--bg-elevated)" }}>
-                <div className="font-mono-display text-lg" style={{ color: "var(--signal-edge)" }}>
-                  {r.upsideBand}
+            {/* Horizon projections — indicator + sentiment driven */}
+            <div className="mt-3">
+              <div className="text-xs font-mono-display text-[var(--text-tertiary)] uppercase mb-1">
+                Possible upside by horizon
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {r.horizons.map((hz) => (
+                  <div
+                    key={hz.hours}
+                    className="rounded-input px-2 py-1.5 text-center"
+                    style={{ background: "var(--bg-elevated)" }}
+                  >
+                    <div className="text-xs text-[var(--text-tertiary)] font-mono-display">
+                      {hz.hours}H
+                    </div>
+                    <div
+                      className="font-mono-display text-lg"
+                      style={{
+                        color:
+                          hz.upsidePct >= 30
+                            ? "var(--signal-edge)"
+                            : hz.upsidePct >= 10
+                              ? "var(--signal-long)"
+                              : "var(--text-secondary)",
+                      }}
+                    >
+                      +{hz.upsidePct}%
+                    </div>
+                    <div className="text-xs font-mono-display text-[var(--text-secondary)]">
+                      ~{hz.prob}% odds
+                    </div>
+                  </div>
+                ))}
+                <div className="rounded-input px-2 py-1.5 text-center" style={{ background: "var(--bg-elevated)" }}>
+                  <div className="text-xs text-[var(--text-tertiary)] font-mono-display">BAND</div>
+                  <div className="font-mono-display text-lg" style={{ color: "var(--signal-edge)" }}>
+                    {r.upsideBand}
+                  </div>
+                  <div className="text-xs font-mono-display text-[var(--text-secondary)]">
+                    2x ~{r.p2x}% · 5x ~{r.p5x}%
+                  </div>
                 </div>
-                <div className="text-xs text-[var(--text-tertiary)] font-mono-display uppercase">
-                  target band
-                </div>
+              </div>
+              <div className="text-xs text-[var(--text-tertiary)] font-mono-display mt-1">
+                Drivers: {r.drivers}
               </div>
             </div>
 
@@ -265,15 +364,3 @@ export default function ConfluenceView() {
   );
 }
 
-function Odds({ label, pct }: { label: string; pct: number }) {
-  const clr =
-    pct >= 50 ? "var(--signal-long)" : pct >= 25 ? "var(--signal-neutral)" : "var(--text-secondary)";
-  return (
-    <div className="rounded-input px-2 py-1.5 text-center" style={{ background: "var(--bg-elevated)" }}>
-      <div className="font-mono-display text-lg" style={{ color: clr }}>
-        ~{pct}%
-      </div>
-      <div className="text-xs text-[var(--text-tertiary)] font-mono-display uppercase">{label}</div>
-    </div>
-  );
-}
