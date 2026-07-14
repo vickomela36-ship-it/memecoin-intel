@@ -15,6 +15,7 @@ import FootballView from "@/components/views/FootballView";
 import ChallengeView from "@/components/views/ChallengeView";
 import PortfolioView from "@/components/views/PortfolioView";
 import ConfluenceView from "@/components/views/ConfluenceView";
+import PositionsView from "@/components/views/PositionsView";
 import type { TabId } from "@/types";
 
 export default function Home() {
@@ -90,6 +91,7 @@ export default function Home() {
           />
         </div>
         {tab === "confluence" && <ConfluenceView />}
+        {tab === "positions" && <PositionsView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
       </div>
