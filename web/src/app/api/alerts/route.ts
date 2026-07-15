@@ -10,20 +10,37 @@ export const maxDuration = 60;
 
 const TG = "https://api.telegram.org";
 
-// In-memory dedup — survives while the lambda stays warm. Cold starts may
-// occasionally re-alert; real persistence arrives with the KV upgrade.
+// Dedup: KV-backed (SET NX with 6h TTL) so it survives cold starts.
+// Falls back to warm-lambda memory when KV isn't configured.
 const alerted = new Map<string, number>();
 const DEDUP_MS = 6 * 3600 * 1000;
 
-function shouldAlert(key: string): boolean {
+function memShouldAlert(key: string): boolean {
   const now = Date.now();
-  // prune
   alerted.forEach((t, k) => {
     if (now - t > DEDUP_MS) alerted.delete(k);
   });
   if (alerted.has(key)) return false;
   alerted.set(key, now);
   return true;
+}
+
+async function shouldAlert(key: string): Promise<boolean> {
+  const url = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return memShouldAlert(key);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(["SET", `mi:alerted:${key}`, "1", "EX", 21600, "NX"]),
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return data?.result === "OK"; // null = key existed = already alerted
+  } catch {
+    return memShouldAlert(key);
+  }
 }
 
 async function tgCall<T>(token: string, method: string, body?: object): Promise<T | null> {
@@ -56,17 +73,20 @@ async function resolveChatId(token: string): Promise<string | null> {
   return null;
 }
 
-function memeAlertLines(scan: Awaited<ReturnType<typeof cachedScan>>): string[] {
-  const lines: string[] = [];
+function memeAlertCandidates(
+  scan: Awaited<ReturnType<typeof cachedScan>>
+): { key: string; text: string }[] {
+  const lines: { key: string; text: string }[] = [];
   const push = (s: MemeSignal, label: string) => {
-    if (!shouldAlert(`${s.address}-${s.playType}`)) return;
-    lines.push(
+    lines.push({
+      key: `${s.address}-${s.playType}`,
+      text:
       `🚨 <b>${label}</b> $${s.symbol} — score ${s.score}\n` +
         `MCap $${(s.fdv / 1000).toFixed(0)}K · Liq $${(s.liquidity / 1000).toFixed(0)}K · ` +
         `1h ${s.h1 >= 0 ? "+" : ""}${s.h1.toFixed(0)}% · B/S ${s.buySellRatio.toFixed(1)}x\n` +
         `Plan: ${s.sizingKey} sizing · <a href="https://jup.ag/swap/SOL-${s.address}">Jupiter</a> · ` +
-        `<a href="${s.pairUrl}">DexScreener</a>`
-    );
+        `<a href="${s.pairUrl}">DexScreener</a>`,
+    });
   };
 
   for (const s of scan.sure2x) push(s, "2x GRINDER");
@@ -79,7 +99,7 @@ function memeAlertLines(scan: Awaited<ReturnType<typeof cachedScan>>): string[] 
   ))
     push(s, s.tier ?? "DEGEN");
 
-  return lines.slice(0, 5); // never spam more than 5 per run
+  return lines;
 }
 
 export async function GET(req: NextRequest) {
@@ -124,10 +144,12 @@ export async function GET(req: NextRequest) {
   // ── Memecoin alerts ──────────────────────────────────────────────────
   try {
     const scan = await cachedScan();
-    for (const line of memeAlertLines(scan)) {
+    for (const cand of memeAlertCandidates(scan).slice(0, 12)) {
+      if (sent >= 5) break; // never spam more than 5 per run
+      if (!(await shouldAlert(cand.key))) continue;
       const ok = await tgCall(token, "sendMessage", {
         chat_id: chatId,
-        text: line,
+        text: cand.text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
       });
@@ -143,14 +165,14 @@ export async function GET(req: NextRequest) {
     const tickets = await buildAllTickets();
     for (const t of tickets) {
       const key = `perp-${t.symbol}-${t.direction}`;
-      if (t.squeezeWatch && t.confidence !== "LOW" && shouldAlert(`squeeze-${t.symbol}`)) {
+      if (t.squeezeWatch && t.confidence !== "LOW" && (await shouldAlert(`squeeze-${t.symbol}`))) {
         const ok = await tgCall(token, "sendMessage", {
           chat_id: chatId,
           text: `⚡ <b>${t.display}</b> ${t.squeezeWatch}\nBias ${t.bias >= 0 ? "+" : ""}${t.bias} (${t.direction}) · funding ${t.fundingPct8h}%/8h · OI 24h ${t.oiChange24hPct >= 0 ? "+" : ""}${t.oiChange24hPct}%`,
           parse_mode: "HTML",
         });
         if (ok) sent++;
-      } else if (t.confidence === "HIGH" && t.direction !== "STAND ASIDE" && shouldAlert(key)) {
+      } else if (t.confidence === "HIGH" && t.direction !== "STAND ASIDE" && (await shouldAlert(key))) {
         const ok = await tgCall(token, "sendMessage", {
           chat_id: chatId,
           text:

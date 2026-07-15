@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getSyncId, getSyncStatus, linkSyncId } from "@/lib/sync";
 
 export interface AppSettings {
   cryptoRefreshMs: number;
@@ -83,8 +84,81 @@ export default function Settings({
             Football refreshes every 30m — odds are cached server-side to
             respect the 500 req/month free tier.
           </div>
+
+          <SyncSection />
         </div>
       )}
+    </div>
+  );
+}
+
+function SyncSection() {
+  const [syncId, setSyncId] = useState("");
+  const [status, setStatus] = useState("off");
+  const [linkInput, setLinkInput] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setSyncId(getSyncId());
+    setStatus(getSyncStatus());
+    const id = setInterval(() => setStatus(getSyncStatus()), 3000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="border-t border-[var(--border-subtle)] pt-3 space-y-2">
+      <div className="font-mono-display text-xs uppercase tracking-wider text-[var(--text-secondary)]">
+        Device sync{" "}
+        <span
+          style={{
+            color:
+              status === "synced"
+                ? "var(--signal-long)"
+                : status === "error"
+                  ? "var(--signal-short)"
+                  : "var(--text-tertiary)",
+          }}
+        >
+          · {status === "off" ? "local only" : status}
+        </span>
+      </div>
+      <div className="text-xs text-[var(--text-tertiary)]">
+        Your sync code is the only key to your data — treat it like a password.
+        Paste it on your other device to share watchlist, positions, and
+        challenge state.
+      </div>
+      <div className="flex gap-2 items-center">
+        <code className="text-xs font-mono-display bg-[var(--bg-primary)] rounded-input px-2 py-1 break-all flex-1">
+          {syncId ? `${syncId.slice(0, 10)}…${syncId.slice(-4)}` : "—"}
+        </code>
+        <button
+          onClick={() => {
+            navigator.clipboard?.writeText(syncId);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="text-xs font-mono-display px-2 py-1 rounded-btn border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+        >
+          {copied ? "copied" : "copy"}
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={linkInput}
+          onChange={(e) => setLinkInput(e.target.value)}
+          placeholder="paste code from other device"
+          className="flex-1 bg-[var(--bg-primary)] rounded-input px-2 py-1 text-xs border border-[var(--border-subtle)] font-mono-display"
+        />
+        <button
+          onClick={async () => {
+            const ok = await linkSyncId(linkInput.trim());
+            if (ok || linkInput.trim()) window.location.reload();
+          }}
+          className="text-xs font-mono-display px-2 py-1 rounded-btn border border-[var(--border-active)] text-[var(--signal-edge)]"
+        >
+          LINK
+        </button>
+      </div>
     </div>
   );
 }

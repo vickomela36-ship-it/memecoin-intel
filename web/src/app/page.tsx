@@ -17,6 +17,7 @@ import PortfolioView from "@/components/views/PortfolioView";
 import ConfluenceView from "@/components/views/ConfluenceView";
 import PositionsView from "@/components/views/PositionsView";
 import type { TabId } from "@/types";
+import { initSync } from "@/lib/sync";
 
 export default function Home() {
   const [tab, setTab] = useState<TabId>("memecoin");
@@ -30,6 +31,14 @@ export default function Home() {
 
   useEffect(() => {
     setSettings(loadSettings());
+    // Cross-device sync: pull remote state on boot, push changes every 20s.
+    // Reload once per session when a newer remote snapshot lands.
+    return initSync(() => {
+      if (!sessionStorage.getItem("mi_sync_applied")) {
+        sessionStorage.setItem("mi_sync_applied", "1");
+        window.location.reload();
+      }
+    });
   }, []);
 
   const onMeme = useCallback(
