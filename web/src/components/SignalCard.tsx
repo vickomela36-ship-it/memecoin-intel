@@ -228,6 +228,16 @@ export default function SignalCard({
           >
             BUY (Jupiter) ↗
           </a>
+          <button
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("mi:goto-safety", { detail: signal.address })
+              )
+            }
+            className="text-xs font-mono-display text-[var(--signal-neutral)] hover:underline"
+          >
+            Safety ↗
+          </button>
           {signal.pairUrl && (
             <a
               href={signal.pairUrl}

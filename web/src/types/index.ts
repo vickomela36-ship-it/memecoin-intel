@@ -5,6 +5,7 @@ export type ModuleId = "memecoin" | "football" | "crypto";
 export type TabId =
   | ModuleId
   | "confluence"
+  | "intel"
   | "positions"
   | "challenge"
   | "portfolio";
@@ -182,6 +183,47 @@ export interface MatchEdge {
   booksCount: number;
   questions: BinaryQuestion[];
   hasStrong: boolean;
+}
+
+// ── Safety Card ───────────────────────────────────────────────────────────
+
+export type SafetyVerdict = "pass" | "warn" | "fail" | "unknown";
+
+export interface SafetyCheck {
+  id: string;
+  label: string;
+  verdict: SafetyVerdict;
+  value: string; // the underlying number, shown verbatim
+  explain: string; // one-line plain-English "why this matters"
+}
+
+export interface FundingCluster {
+  origin: string; // funding wallet (truncated)
+  holders: number; // how many top holders it funded
+  withinHours: number | null;
+  pctOfSupply: number | null;
+}
+
+export interface SafetyReport {
+  mint: string;
+  symbol: string;
+  name: string;
+  fetchedAt: number;
+  verdict: SafetyVerdict; // overall
+  checks: SafetyCheck[];
+  creator: {
+    address: string | null;
+    status: "accumulating" | "holding" | "distributing" | "unknown";
+    note: string;
+  };
+  deep: {
+    ran: boolean;
+    freshWallets: number | null;
+    topSampled: number;
+    fundingClusters: FundingCluster[];
+    note: string;
+  } | null;
+  sources: string[]; // which providers answered
 }
 
 // ── Whale / insider intel ─────────────────────────────────────────────────

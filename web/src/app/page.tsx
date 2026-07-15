@@ -16,6 +16,7 @@ import ChallengeView from "@/components/views/ChallengeView";
 import PortfolioView from "@/components/views/PortfolioView";
 import ConfluenceView from "@/components/views/ConfluenceView";
 import PositionsView from "@/components/views/PositionsView";
+import IntelView from "@/components/views/IntelView";
 import type { TabId } from "@/types";
 import { initSync } from "@/lib/sync";
 
@@ -31,14 +32,21 @@ export default function Home() {
 
   useEffect(() => {
     setSettings(loadSettings());
+    // Signal cards can deep-link into the Safety tab
+    const onGotoSafety = () => setTab("intel");
+    window.addEventListener("mi:goto-safety", onGotoSafety);
     // Cross-device sync: pull remote state on boot, push changes every 20s.
     // Reload once per session when a newer remote snapshot lands.
-    return initSync(() => {
+    const cleanupSync = initSync(() => {
       if (!sessionStorage.getItem("mi_sync_applied")) {
         sessionStorage.setItem("mi_sync_applied", "1");
         window.location.reload();
       }
     });
+    return () => {
+      window.removeEventListener("mi:goto-safety", onGotoSafety);
+      cleanupSync();
+    };
   }, []);
 
   const onMeme = useCallback(
@@ -100,6 +108,7 @@ export default function Home() {
           />
         </div>
         {tab === "confluence" && <ConfluenceView />}
+        {tab === "intel" && <IntelView />}
         {tab === "positions" && <PositionsView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
