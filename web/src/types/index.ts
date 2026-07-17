@@ -204,6 +204,36 @@ export interface FundingCluster {
   pctOfSupply: number | null;
 }
 
+export interface CoinTypeInfo {
+  type: string;
+  confidence: string;
+  reason: string;
+  horizon: string;
+}
+
+export interface BottedFlag {
+  pattern: string;
+  confidence: number;
+  explain: string;
+}
+
+export interface NarrativeCompetitorLite {
+  symbol: string;
+  address: string;
+  ageHours: number;
+  fdv: number;
+  vol24: number;
+  isLeaderByVol: boolean;
+  canonicalMatch: boolean;
+}
+
+export interface CollisionInfo {
+  keyword: string;
+  competitors: NarrativeCompetitorLite[];
+  vampRisk: boolean;
+  vampReason: string;
+}
+
 export interface SafetyReport {
   mint: string;
   symbol: string;
@@ -211,6 +241,9 @@ export interface SafetyReport {
   fetchedAt: number;
   verdict: SafetyVerdict; // overall
   checks: SafetyCheck[];
+  coinType: CoinTypeInfo | null;
+  botted: BottedFlag[];
+  collision: CollisionInfo | null;
   creator: {
     address: string | null;
     status: "accumulating" | "holding" | "distributing" | "unknown";

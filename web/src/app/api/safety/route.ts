@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import type {
+  DexPair,
   FundingCluster,
   SafetyCheck,
   SafetyReport,
   SafetyVerdict,
 } from "@/types";
+import {
+  buildCollision,
+  classifyCoinType,
+  detectBottedChart,
+  narrativeKeyword,
+  type OHLCV,
+} from "@/modules/memecoin/detectors";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const HELIUS_KEY =
   process.env.HELIUS_API_KEY ?? "8292769f-aeb2-471c-af1d-fb98576972e4";
+const BIRDEYE_KEY =
+  process.env.BIRDEYE_API_KEY ?? "dac9521a4c004f65897b2bd3e52cf10d";
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -190,6 +200,43 @@ async function deepScan(
   };
 }
 
+// ── Birdeye OHLCV for botted-chart detection ──────────────────────────────
+
+async function getOhlcv(mint: string): Promise<OHLCV> {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - 60 * 60 * 24 * 2; // 2 days of 15m candles
+    const res = await fetch(
+      `https://public-api.birdeye.so/defi/ohlcv?address=${mint}&type=15m&time_from=${from}&time_to=${now}`,
+      { headers: { "X-API-KEY": BIRDEYE_KEY, "x-chain": "solana" }, cache: "no-store" }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data?.data?.items ?? [];
+    return items.map((c: Record<string, unknown>) => ({
+      o: num(c.o), h: num(c.h), l: num(c.l), c: num(c.c), v: num(c.v),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ── DexScreener search for narrative collision ─────────────────────────────
+
+async function searchNarrative(keyword: string): Promise<DexPair[]> {
+  try {
+    const res = await fetch(
+      `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(keyword)}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.pairs ?? []) as DexPair[];
+  } catch {
+    return [];
+  }
+}
+
 // ── Report builder ─────────────────────────────────────────────────────────
 
 function worstOf(checks: SafetyCheck[]): SafetyVerdict {
@@ -207,10 +254,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "bad mint" }, { status: 400 });
   }
 
-  const [rug, dex, das] = await Promise.all([
+  const [rug, dex, das, ohlcv] = await Promise.all([
     getRugReport(mint),
     getDex(mint),
     heliusRpc<DasAsset>("getAsset", [mint]),
+    getOhlcv(mint),
   ]);
 
   const sources: string[] = [];
@@ -407,6 +455,57 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Phase-3 detectors ────────────────────────────────────────────────
+  // Coin-type classifier (adapts hold-horizon guidance)
+  const pairForClass: DexPair = {
+    chainId: "solana",
+    pairAddress: dex?.pairAddress ?? "",
+    baseToken: { address: mint, symbol, name },
+    pairCreatedAt: dex?.pairCreatedAt,
+  };
+  const ct = classifyCoinType(pairForClass);
+
+  // Botted-chart detection
+  const botted = detectBottedChart(ohlcv);
+  if (botted.length) sources.push("Birdeye OHLCV");
+  if (botted[0] && botted[0].confidence >= 0.55) {
+    checks.push({
+      id: "botted",
+      label: "Chart authenticity",
+      verdict: botted[0].confidence >= 0.7 ? "fail" : "warn",
+      value: `${botted[0].pattern} (${Math.round(botted[0].confidence * 100)}%)`,
+      explain: botted[0].explain,
+    });
+  }
+
+  // Narrative collision + vamp risk
+  let collision: SafetyReport["collision"] = null;
+  const kw = narrativeKeyword(symbol, name);
+  if (kw && kw.length > 2) {
+    const searchPairs = await searchNarrative(kw);
+    if (searchPairs.length) {
+      const c = buildCollision(kw, { symbol, address: mint }, searchPairs);
+      collision = {
+        keyword: c.keyword,
+        competitors: c.competitors.map((x) => ({
+          symbol: x.symbol, address: x.address, ageHours: Number(x.ageHours.toFixed(1)),
+          fdv: x.fdv, vol24: x.vol24, isLeaderByVol: x.isLeaderByVol, canonicalMatch: x.canonicalMatch,
+        })),
+        vampRisk: c.vampRisk,
+        vampReason: c.vampReason,
+      };
+      if (c.vampRisk) {
+        checks.push({
+          id: "vamp",
+          label: "Vamp risk",
+          verdict: "warn",
+          value: `${c.competitors.length} competing tokens`,
+          explain: c.vampReason,
+        });
+      }
+    }
+  }
+
   const report: SafetyReport = {
     mint,
     symbol,
@@ -414,6 +513,9 @@ export async function GET(req: NextRequest) {
     fetchedAt: Date.now(),
     verdict: worstOf(checks.filter((c) => c.verdict !== "unknown")),
     checks,
+    coinType: ct,
+    botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain })),
+    collision,
     creator: { address: creatorAddr, status: creatorStatus, note: creatorNote },
     deep: deepResult,
     sources,

@@ -79,6 +79,82 @@ export default function SafetyCard({
             </details>
           ))}
 
+          {/* Coin type + hold horizon */}
+          {report.coinType && (
+            <div className="rounded-input px-3 py-2 text-sm" style={{ background: "var(--bg-elevated)" }}>
+              <span className="text-[var(--text-secondary)]">Coin type:</span>{" "}
+              <b className="font-mono-display">{report.coinType.type}</b>{" "}
+              <span className="text-xs text-[var(--text-tertiary)]">({report.coinType.confidence} confidence)</span>
+              <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{report.coinType.reason}</div>
+              <div className="text-xs mt-0.5" style={{ color: "var(--signal-neutral)" }}>
+                Hold logic: {report.coinType.horizon}
+              </div>
+            </div>
+          )}
+
+          {/* Narrative collision */}
+          {report.collision && report.collision.competitors.length > 1 && (
+            <details className="rounded-input" style={{ background: "var(--bg-elevated)" }}>
+              <summary className="px-3 py-1.5 cursor-pointer text-sm flex items-center justify-between">
+                <span>
+                  Narrative: <b>&quot;{report.collision.keyword}&quot;</b>{" "}
+                  <span className="text-xs text-[var(--text-tertiary)]">
+                    {report.collision.competitors.length} competing tokens
+                  </span>
+                </span>
+                {report.collision.vampRisk && (
+                  <span className="font-mono-display text-xs" style={{ color: "var(--signal-short)" }}>
+                    ⚠ VAMP RISK
+                  </span>
+                )}
+              </summary>
+              <div className="px-3 pb-2">
+                <div className="text-xs text-[var(--text-secondary)] mb-1">{report.collision.vampReason}</div>
+                <table className="data-table">
+                  <thead><tr><th>Token</th><th>Age</th><th>MCap</th><th>Vol 24h</th><th></th></tr></thead>
+                  <tbody>
+                    {report.collision.competitors.map((c) => (
+                      <tr key={c.address}>
+                        <td className="font-mono-display">
+                          ${c.symbol}{c.canonicalMatch && " ✓"}
+                          {c.isLeaderByVol && <span style={{ color: "var(--signal-edge)" }}> ◀ leader</span>}
+                        </td>
+                        <td>{c.ageHours < 24 ? `${c.ageHours.toFixed(0)}h` : `${(c.ageHours / 24).toFixed(0)}d`}</td>
+                        <td>${(c.fdv / 1000).toFixed(0)}K</td>
+                        <td>${(c.vol24 / 1000).toFixed(0)}K</td>
+                        <td>
+                          <button
+                            onClick={() => window.dispatchEvent(new CustomEvent("mi:goto-safety", { detail: c.address }))}
+                            className="text-xs text-[var(--signal-edge)] hover:underline"
+                          >
+                            check
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1">✓ = ticker/name canonically matches the narrative.</div>
+              </div>
+            </details>
+          )}
+
+          {/* Botted patterns (beyond the summary check) */}
+          {report.botted.length > 1 && (
+            <details className="rounded-input" style={{ background: "var(--bg-elevated)" }}>
+              <summary className="px-3 py-1.5 cursor-pointer text-sm" style={{ color: "var(--signal-short)" }}>
+                ⚠ {report.botted.length} manufactured-chart patterns detected
+              </summary>
+              <ul className="px-3 pb-2 text-xs space-y-1">
+                {report.botted.map((b) => (
+                  <li key={b.pattern}>
+                    <b>{b.pattern}</b> ({Math.round(b.confidence * 100)}%) — {b.explain}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           {/* Creator */}
           <div className="rounded-input px-3 py-2 text-sm" style={{ background: "var(--bg-elevated)" }}>
             <span className="text-[var(--text-secondary)]">Creator wallet:</span>{" "}
