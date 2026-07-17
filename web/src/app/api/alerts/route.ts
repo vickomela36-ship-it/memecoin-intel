@@ -159,6 +159,23 @@ export async function GET(req: NextRequest) {
     errors.push("meme scan failed");
   }
 
+  // ── Creator-ledger ingest (build track records over time) ────────────
+  try {
+    const scan = await cachedScan();
+    const ingest = [...scan.launches, ...scan.pumpfun].map((s) => ({
+      mint: s.address, symbol: s.symbol, mcap: s.fdv,
+    }));
+    if (ingest.length) {
+      await fetch(`${url.origin}/api/creators`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokens: ingest }),
+      });
+    }
+  } catch {
+    errors.push("creator ingest failed");
+  }
+
   // ── Perp squeeze alerts (EU region can reach Binance) ────────────────
   try {
     const { buildAllTickets } = await import("@/modules/crypto/perps");

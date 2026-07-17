@@ -6,6 +6,7 @@ export type TabId =
   | ModuleId
   | "confluence"
   | "intel"
+  | "creators"
   | "positions"
   | "challenge"
   | "portfolio";

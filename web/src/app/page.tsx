@@ -17,6 +17,7 @@ import PortfolioView from "@/components/views/PortfolioView";
 import ConfluenceView from "@/components/views/ConfluenceView";
 import PositionsView from "@/components/views/PositionsView";
 import IntelView from "@/components/views/IntelView";
+import CreatorsView from "@/components/views/CreatorsView";
 import type { TabId } from "@/types";
 import { initSync } from "@/lib/sync";
 
@@ -109,6 +110,7 @@ export default function Home() {
         </div>
         {tab === "confluence" && <ConfluenceView />}
         {tab === "intel" && <IntelView />}
+        {tab === "creators" && <CreatorsView />}
         {tab === "positions" && <PositionsView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
