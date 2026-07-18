@@ -37,6 +37,7 @@ const GROUPS: Group[] = [
     label: "MARKETS",
     tabs: [
       { id: "crypto", label: "Perps" },
+      { id: "lp", label: "LP Calls" },
       { id: "football", label: "Football" },
     ],
   },

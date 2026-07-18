@@ -9,7 +9,8 @@ export type TabId =
   | "creators"
   | "positions"
   | "challenge"
-  | "portfolio";
+  | "portfolio"
+  | "lp";
 
 export interface ScoreComponent {
   name: string;
@@ -332,6 +333,48 @@ export interface PerpTicket {
   squeezeWatch: string | null;
   warnings: string[];
   whale: WhalePrints | null;
+}
+
+// ── Liquidity-provision calls (Meteora DLMM) ──────────────────────────────
+
+export type LpClass = "STABLE" | "BLUECHIP" | "MEMECOIN";
+
+export interface LpStrategy {
+  shape: "Curve" | "Spot" | "Bid-Ask";
+  binStepReco: string; // recommended band
+  binStepMatch: "matched" | "tighter than ideal" | "wider than ideal";
+  range: string; // suggested range width around current price
+  sided: string; // balanced vs single-sided
+  entry: string; // one-line entry setup
+  manage: string; // management rule
+  ilNote: string;
+}
+
+export interface LpCall {
+  address: string;
+  name: string;
+  cls: LpClass;
+  tvlUsd: number;
+  vol24Usd: number;
+  fees24Usd: number;
+  feeYieldDailyPct: number; // fees_24h / tvl
+  estAprPct: number; // feeYield * 365
+  volTvlRatio: number;
+  binStep: number;
+  baseFeePct: number;
+  currentPrice: number;
+  quality: number; // ranking score
+  strategy: LpStrategy;
+  warnings: string[];
+  url: string;
+}
+
+export interface LpResult {
+  stable: LpCall[];
+  bluechip: LpCall[];
+  memecoin: LpCall[];
+  fetchedAt: number;
+  poolsScanned: number;
 }
 
 // ── Crypto ────────────────────────────────────────────────────────────────
