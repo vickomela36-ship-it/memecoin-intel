@@ -143,7 +143,9 @@ export default function IntelView() {
       const r = await jsonFetcher<SafetyReport>(`/api/safety?mint=${mint}${deep ? "&deep=1" : ""}`);
       setReport(r);
     } catch {
-      setError("Could not reach the safety sources. They may be rate-limited — try again shortly.");
+      setError(
+        "The free safety sources (Rugcheck/DexScreener) are rate-limited right now. Results cache for 5 minutes once they answer — wait ~30s and check again."
+      );
     } finally {
       setLoading(false);
       setDeepLoading(false);

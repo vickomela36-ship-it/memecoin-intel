@@ -312,8 +312,14 @@ function buildTicket(display: string, symbol: string, raw: RawPerp): PerpTicket 
     Math.min(100, components.reduce((a, c) => a + c.score * (c.weightPct / 100), 0))
   );
 
+  // BTC and SOL always carry a directional lean (never STAND ASIDE) — the
+  // user always wants a position read on the majors, even when weak.
+  const alwaysOn = display === "BTC" || display === "SOL";
   const direction: PerpTicket["direction"] =
-    bias >= 25 ? "LONG" : bias <= -25 ? "SHORT" : "STAND ASIDE";
+    bias >= 25 ? "LONG"
+      : bias <= -25 ? "SHORT"
+      : alwaysOn ? (bias >= 0 ? "LONG" : "SHORT")
+      : "STAND ASIDE";
   const confidence: PerpTicket["confidence"] =
     Math.abs(bias) >= 55 ? "HIGH" : Math.abs(bias) >= 35 ? "MEDIUM" : "LOW";
 
@@ -324,6 +330,12 @@ function buildTicket(display: string, symbol: string, raw: RawPerp): PerpTicket 
   const tp1 = isLong ? mark * (1 + (stopPct * 1.5) / 100) : mark * (1 - (stopPct * 1.5) / 100);
   const tp2 = isLong ? mark * (1 + (stopPct * 3) / 100) : mark * (1 - (stopPct * 3) / 100);
   const maxLev = Math.max(1, Math.min(20, Math.floor(45 / stopPct)));
+
+  if (alwaysOn && Math.abs(bias) < 25) {
+    warnings.push(
+      `Weak lean — bias only ${bias >= 0 ? "+" : ""}${Math.round(bias)}. Shown because you always want a majors read, but size this small or wait for confirmation.`
+    );
+  }
 
   let squeezeWatch: string | null = null;
   if (oi !== null) {
@@ -458,5 +470,9 @@ export async function buildAllTickets(): Promise<PerpTicket[]> {
   if (!tickets.length) {
     throw new Error("Both Binance and Bybit unreachable");
   }
-  return tickets.sort((a, b) => Math.abs(b.bias) - Math.abs(a.bias));
+  // Pin BTC + SOL to the top (always-on majors), then by conviction
+  const pinRank = (d: string) => (d === "BTC" ? 0 : d === "SOL" ? 1 : 2);
+  return tickets.sort(
+    (a, b) => pinRank(a.display) - pinRank(b.display) || Math.abs(b.bias) - Math.abs(a.bias)
+  );
 }

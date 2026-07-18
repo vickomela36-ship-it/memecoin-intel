@@ -155,6 +155,52 @@ export default function SafetyCard({
             </details>
           )}
 
+          {/* Holder / insider table */}
+          {report.holders.length > 0 && (
+            <details className="rounded-input" style={{ background: "var(--bg-elevated)" }}>
+              <summary className="px-3 py-1.5 cursor-pointer text-sm">
+                Top holders ({report.holders.length})
+                {report.holderCount !== null && (
+                  <span className="text-xs text-[var(--text-tertiary)]"> · {report.holderCount.toLocaleString()} total</span>
+                )}
+                {report.holders.filter((h) => h.insider && !h.isLp).length > 0 && (
+                  <span className="text-xs" style={{ color: "var(--signal-short)" }}>
+                    {" "}· {report.holders.filter((h) => h.insider && !h.isLp).length} insider-tagged
+                  </span>
+                )}
+              </summary>
+              <div className="px-3 pb-2 overflow-x-auto">
+                <table className="data-table">
+                  <thead><tr><th>#</th><th>Wallet</th><th>%</th><th>Tag</th></tr></thead>
+                  <tbody>
+                    {report.holders.map((h, i) => (
+                      <tr key={h.owner}>
+                        <td>{i + 1}</td>
+                        <td>
+                          <a href={`https://solscan.io/account/${h.owner}`} target="_blank" rel="noopener noreferrer"
+                            className="font-mono-display text-[var(--signal-edge)] hover:underline">
+                            {h.owner.slice(0, 4)}…{h.owner.slice(-4)}
+                          </a>
+                        </td>
+                        <td className="font-mono-display" style={{ color: !h.isLp && h.pct > 3.5 ? "var(--signal-short)" : undefined }}>
+                          {h.pct.toFixed(1)}%
+                        </td>
+                        <td className="text-xs">
+                          {h.isLp ? <span className="text-[var(--text-tertiary)]">LP pool</span>
+                            : h.insider ? <span style={{ color: "var(--signal-short)" }}>insider</span>
+                            : <span className="text-[var(--text-tertiary)]">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                  LP pool rows are the liquidity, not a trader. Insider = bundler/insider-tagged by Rugcheck. Run DEEP SCAN below to trace which of these were funded by the same wallet.
+                </div>
+              </div>
+            </details>
+          )}
+
           {/* Creator */}
           <div className="rounded-input px-3 py-2 text-sm" style={{ background: "var(--bg-elevated)" }}>
             <span className="text-[var(--text-secondary)]">Creator wallet:</span>{" "}

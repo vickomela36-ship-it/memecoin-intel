@@ -22,9 +22,47 @@ const HELIUS_KEY =
 const BIRDEYE_KEY =
   process.env.BIRDEYE_API_KEY ?? "dac9521a4c004f65897b2bd3e52cf10d";
 
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+
 function num(v: unknown): number {
   const n = Number(v);
   return isFinite(n) ? n : 0;
+}
+
+async function kv(cmd: (string | number)[]): Promise<unknown> {
+  if (!KV_URL || !KV_TOKEN) return null;
+  try {
+    const res = await fetch(KV_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(cmd),
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return data?.result ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** fetch with one 429/5xx backoff — the providers are the rate-limit cost. */
+async function fetchRetry(url: string, init?: RequestInit, tries = 2): Promise<Response | null> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.status === 429 || res.status >= 500) {
+        if (i < tries - 1) {
+          await new Promise((r) => setTimeout(r, 600 * (i + 1)));
+          continue;
+        }
+      }
+      return res;
+    } catch {
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  return null;
 }
 
 async function heliusRpc<T>(method: string, params: unknown[]): Promise<T | null> {
@@ -81,11 +119,11 @@ interface DexResp {
 }
 
 async function getRugReport(mint: string): Promise<RugReport | null> {
+  const res = await fetchRetry(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, {
+    next: { revalidate: 300 },
+  });
+  if (!res || !res.ok) return null;
   try {
-    const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, {
-      next: { revalidate: 300 },
-    });
-    if (!res.ok) return null;
     return (await res.json()) as RugReport;
   } catch {
     return null;
@@ -254,6 +292,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "bad mint" }, { status: 400 });
   }
 
+  // Serve a cached base report (5 min) to survive provider rate limits.
+  // Deep scans always run live (they mutate the report with wallet tracing).
+  if (!deep) {
+    const cached = (await kv(["GET", `mi:safety:${mint}`])) as string | null;
+    if (cached) {
+      try {
+        return NextResponse.json({ ...JSON.parse(cached), cached: true });
+      } catch {
+        /* fall through to live */
+      }
+    }
+  }
+
   const [rug, dex, das, ohlcv] = await Promise.all([
     getRugReport(mint),
     getDex(mint),
@@ -323,14 +374,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 4. Top holder concentration (LP excluded)
-  const nonLp = (rug?.topHolders ?? [])
-    .filter((h) => {
-      const a = h.owner ?? h.address ?? "";
-      return a && !lpAddrs.has(a) && !lpAddrs.has(h.address ?? "");
+  // Full holder table (LP flagged, not removed) — the insider view
+  const holders = (rug?.topHolders ?? [])
+    .map((h) => {
+      const owner = h.owner ?? h.address ?? "";
+      const isLp = lpAddrs.has(owner) || lpAddrs.has(h.address ?? "");
+      return { owner, pct: num(h.pct), insider: !!h.insider, isLp };
     })
-    .map((h) => ({ owner: h.owner ?? h.address ?? "", pct: num(h.pct), insider: !!h.insider }))
-    .sort((a, b) => b.pct - a.pct);
+    .filter((h) => h.owner)
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 20);
+
+  // 4. Top holder concentration (LP excluded)
+  const nonLp = holders.filter((h) => !h.isLp);
   if (nonLp.length) {
     const top = nonLp[0];
     checks.push({
@@ -516,13 +572,26 @@ export async function GET(req: NextRequest) {
     coinType: ct,
     botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain })),
     collision,
+    holders,
+    holderCount: rug?.totalHolders ? num(rug.totalHolders) : null,
     creator: { address: creatorAddr, status: creatorStatus, note: creatorNote },
     deep: deepResult,
     sources,
   };
 
   if (!sources.length) {
-    return NextResponse.json({ error: "no data sources answered", ...report }, { status: 502 });
+    return NextResponse.json(
+      {
+        error: "Sources are rate-limited right now — try again in ~30s. (Rugcheck/DexScreener throttle free lookups.)",
+        ...report,
+      },
+      { status: 502 }
+    );
+  }
+
+  // Cache the base report for 5 minutes to blunt provider rate limits
+  if (!deep) {
+    await kv(["SET", `mi:safety:${mint}`, JSON.stringify(report), "EX", 300]);
   }
   return NextResponse.json(report);
 }

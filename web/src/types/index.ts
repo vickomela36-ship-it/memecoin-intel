@@ -205,6 +205,13 @@ export interface FundingCluster {
   pctOfSupply: number | null;
 }
 
+export interface HolderRow {
+  owner: string;
+  pct: number;
+  insider: boolean;
+  isLp: boolean;
+}
+
 export interface CoinTypeInfo {
   type: string;
   confidence: string;
@@ -245,6 +252,8 @@ export interface SafetyReport {
   coinType: CoinTypeInfo | null;
   botted: BottedFlag[];
   collision: CollisionInfo | null;
+  holders: HolderRow[];
+  holderCount: number | null;
   creator: {
     address: string | null;
     status: "accumulating" | "holding" | "distributing" | "unknown";
