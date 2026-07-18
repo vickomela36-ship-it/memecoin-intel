@@ -70,10 +70,21 @@ function LpCard({ c }: { c: LpCall }) {
         </div>
       )}
 
-      <div className="flex items-center justify-between mt-2">
-        <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-xs font-mono-display text-[var(--signal-edge)] hover:underline">
-          Open on Meteora ↗
-        </a>
+      <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          {c.tokenMint && (
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent("mi:goto-safety", { detail: c.tokenMint }))}
+              className="text-xs font-mono-display px-2 py-1 rounded-btn border border-[var(--border-subtle)]"
+              style={{ color: "var(--signal-neutral)" }}
+            >
+              ⚠ Check Safety first
+            </button>
+          )}
+          <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-xs font-mono-display text-[var(--signal-edge)] hover:underline">
+            Open on Meteora ↗
+          </a>
+        </div>
         <span className="text-xs text-[var(--text-tertiary)]">Not financial advice · LP carries IL + smart-contract risk</span>
       </div>
     </div>

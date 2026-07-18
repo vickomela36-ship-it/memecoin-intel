@@ -367,6 +367,7 @@ export interface LpCall {
   strategy: LpStrategy;
   warnings: string[];
   url: string;
+  tokenMint: string | null; // the non-quote token mint (for a safety check)
 }
 
 export interface LpResult {

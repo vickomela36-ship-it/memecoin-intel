@@ -92,6 +92,8 @@ export function qualityScore(feeYieldDaily: number, volTvl: number, tvl: number,
 export interface RawPool {
   address: string;
   name: string;
+  mint_x?: string;
+  mint_y?: string;
   bin_step: number;
   base_fee_percentage: string | number;
   liquidity: string | number;
@@ -100,6 +102,16 @@ export interface RawPool {
   current_price: string | number;
   hide?: boolean;
   is_blacklisted?: boolean;
+}
+
+const QUOTES = new Set(["SOL", "WSOL", "USDC", "USDT"]);
+
+/** The non-quote token mint — what you'd run a safety check on. */
+function tokenMintOf(p: RawPool): string | null {
+  const [x, y] = tickers(p.name);
+  if (QUOTES.has(y) && !QUOTES.has(x)) return p.mint_x ?? null;
+  if (QUOTES.has(x) && !QUOTES.has(y)) return p.mint_y ?? null;
+  return p.mint_x ?? null; // fall back to base
 }
 
 function n(v: unknown): number {
@@ -146,5 +158,6 @@ export function buildLpCall(p: RawPool): LpCall | null {
     strategy,
     warnings,
     url: `https://app.meteora.ag/dlmm/${p.address}`,
+    tokenMint: cls === "MEMECOIN" ? tokenMintOf(p) : null,
   };
 }
