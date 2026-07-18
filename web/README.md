@@ -65,3 +65,29 @@ web/src/
 ├── lib/               # accuracy tracker (localStorage), utils
 └── types/             # shared TypeScript interfaces
 ```
+
+## Optional: social analysis (X/Twitter)
+
+X data can't run on Vercel — X blocks scrapers and Agent-Reach needs login
+cookies + a long-running host. The bot-filter and early-poster ranking logic
+is built (`src/modules/social/analyze.ts`); it just needs a data source.
+
+To enable: self-host an [Agent-Reach](https://github.com/Panniantong/Agent-Reach)
+worker (or any service) exposing:
+
+```
+GET {XREACH_URL}/search?q=<query>
+→ [{ author, followers, text, createdAt, url, verified }]
+```
+
+Then set `XREACH_URL` (and optional `XREACH_TOKEN`) in Vercel env. The SAFETY
+tab's Social section then filters bots and surfaces early, credible posters
+with timing context (are you early / on time / late). Until configured, the
+section shows a setup state — it never fabricates posts.
+
+## Optional: creator ledger + alerts
+
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `ALERTS_SECRET` — Telegram alerts
+  (`/api/alerts`, pinged by an external cron every ~5m)
+- Vercel KV (`KV_REST_API_URL` / `KV_REST_API_TOKEN`) — cross-device sync,
+  durable alert dedup, and the creator track-record ledger

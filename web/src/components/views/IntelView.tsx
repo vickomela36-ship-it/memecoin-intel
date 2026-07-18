@@ -6,6 +6,97 @@ import { addWatch } from "@/lib/storage";
 import { jsonFetcher } from "@/lib/utils";
 import type { SafetyReport } from "@/types";
 
+interface SocialResp {
+  configured: boolean;
+  hint?: string;
+  timing?: { label: string; detail: string };
+  humanCount?: number;
+  botCount?: number;
+  human?: { author: string; followers: number; text: string; createdAt: number; url?: string; earlyScore: number; hasThesis: boolean }[];
+}
+
+function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
+  const [data, setData] = useState<SocialResp | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await jsonFetcher<SocialResp>(`/api/social?q=${encodeURIComponent(mint)}`);
+      setData(r);
+    } catch {
+      setData({ configured: true, hint: "Social worker unreachable." });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!data) {
+    return (
+      <div className="card">
+        <button
+          onClick={load}
+          disabled={loading}
+          className="text-xs font-mono-display px-3 py-1.5 rounded-btn border border-[var(--border-active)] text-[var(--signal-edge)] disabled:opacity-50"
+        >
+          {loading ? "READING X…" : `🐦 Social signal for $${symbol}`}
+        </button>
+      </div>
+    );
+  }
+
+  if (!data.configured) {
+    return (
+      <div className="card text-xs text-[var(--text-tertiary)]">
+        <b className="text-[var(--text-secondary)]">Social analysis not connected.</b>{" "}
+        X data can&apos;t run on Vercel (X blocks scrapers; Agent-Reach needs login
+        cookies + a long-running host). Self-host an Agent-Reach worker and set
+        the <code>XREACH_URL</code> env var — then this section filters bots and
+        surfaces early, credible posters. The analysis logic is already built and
+        waiting for a data source; nothing here is faked.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono-display text-base">SOCIAL SIGNAL</h3>
+        {data.timing && (
+          <span
+            className="font-mono-display text-xs px-2 py-0.5 rounded-input"
+            style={{
+              color: data.timing.label === "EARLY" ? "var(--signal-long)" : data.timing.label === "LATE" ? "var(--signal-short)" : "var(--signal-neutral)",
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
+            {data.timing.label}
+          </span>
+        )}
+      </div>
+      {data.timing && <div className="text-xs text-[var(--text-tertiary)]">{data.timing.detail}</div>}
+      <div className="text-xs text-[var(--text-secondary)]">
+        {data.humanCount ?? 0} credible human posts · {data.botCount ?? 0} bots filtered out.
+        Ranked by early + small-account + real thesis, not engagement.
+      </div>
+      {(data.human ?? []).map((p, i) => (
+        <div key={i} className="rounded-input px-3 py-1.5 text-xs" style={{ background: "var(--bg-elevated)" }}>
+          <div className="flex justify-between">
+            <a href={p.url ?? `https://x.com/${p.author}`} target="_blank" rel="noopener noreferrer"
+              className="font-mono-display text-[var(--signal-edge)] hover:underline">
+              @{p.author}
+            </a>
+            <span className="text-[var(--text-tertiary)]">
+              {p.followers.toLocaleString()} followers · score {p.earlyScore}{p.hasThesis && " · thesis"}
+            </span>
+          </div>
+          <div className="text-[var(--text-secondary)] mt-0.5">{p.text.slice(0, 200)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function IntelView() {
   const [input, setInput] = useState("");
   const [report, setReport] = useState<SafetyReport | null>(null);
@@ -96,6 +187,7 @@ export default function IntelView() {
             deepLoading={deepLoading}
             onDeepScan={report.deep?.ran ? undefined : () => run(true)}
           />
+          <SocialSection mint={report.mint} symbol={report.symbol} />
           <div className="flex gap-3">
             <button
               onClick={() =>
