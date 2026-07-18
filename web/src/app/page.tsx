@@ -18,6 +18,7 @@ import ConfluenceView from "@/components/views/ConfluenceView";
 import PositionsView from "@/components/views/PositionsView";
 import IntelView from "@/components/views/IntelView";
 import CreatorsView from "@/components/views/CreatorsView";
+import Education from "@/components/Education";
 import type { TabId } from "@/types";
 import { initSync } from "@/lib/sync";
 
@@ -30,9 +31,15 @@ export default function Home() {
   });
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [trackKey, setTrackKey] = useState(0);
+  const [showEdu, setShowEdu] = useState(false);
 
   useEffect(() => {
     setSettings(loadSettings());
+    // One-time security onboarding on first ever load
+    if (!localStorage.getItem("mi_edu_seen")) {
+      localStorage.setItem("mi_edu_seen", "1");
+      setShowEdu(true);
+    }
     // Signal cards can deep-link into the Safety tab
     const onGotoSafety = () => setTab("intel");
     window.addEventListener("mi:goto-safety", onGotoSafety);
@@ -81,6 +88,13 @@ export default function Home() {
               />
               Live
             </span>
+            <button
+              onClick={() => setShowEdu(true)}
+              className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-mono-display text-sm px-1"
+              aria-label="help"
+            >
+              ?
+            </button>
             <Settings settings={settings} onChange={setSettings} />
           </div>
         </header>
@@ -115,6 +129,8 @@ export default function Home() {
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
       </div>
+
+      {showEdu && <Education onClose={() => setShowEdu(false)} />}
 
       <TrackRecord refreshKey={trackKey} />
     </main>

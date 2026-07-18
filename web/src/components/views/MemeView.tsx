@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import useSWR from "swr";
 import SignalCard from "@/components/SignalCard";
+import RegimeBanner from "@/components/RegimeBanner";
 import WhaleWatch from "@/components/WhaleWatch";
 import AccuracyBadge from "@/components/AccuracyBadge";
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
@@ -162,6 +163,11 @@ export default function MemeView({
             <Stat label="Degen" value={degens.length} />
           </div>
         </div>
+      )}
+
+      {/* ── REGIME DIAL — trade less when conditions are bad ─────────── */}
+      {pulse && (
+        <RegimeBanner breadthPct={pulse.greenPct} medianH24={pulse.medianH24} />
       )}
 
       {/* ── META OF THE DAY — which narrative is running ─────────────── */}
