@@ -22,6 +22,7 @@ const HIT_MULT: Record<string, number> = {
   pumpfun: 1.5,
   launch: 1.5,
   degen: 1.5,
+  trending: 1.3,
 };
 
 const LOG_TYPE: Record<MemeSignal["mode"], string> = {
@@ -33,6 +34,7 @@ const LOG_TYPE: Record<MemeSignal["mode"], string> = {
   PUMPFUN: "pumpfun",
   LAUNCH: "launch",
   DEGEN: "degen",
+  TRENDING: "trending",
 };
 
 export default function MemeView({
@@ -59,6 +61,7 @@ export default function MemeView({
   );
 
   const fetchedAt = useMemo(() => Date.now(), [data]);
+  const trending = data?.trending ?? [];
   const sure2x = data?.sure2x ?? [];
   const recovery3x = data?.recovery3x ?? [];
   const momentum = data?.momentum ?? [];
@@ -71,10 +74,10 @@ export default function MemeView({
   const pulse = data?.pulse;
   const all = useMemo(
     () => [
-      ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
+      ...trending, ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
       ...higherCap, ...pumpfun, ...launches, ...degens,
     ],
-    [sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
+    [trending, sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
   );
 
   useEffect(() => {
@@ -263,6 +266,12 @@ export default function MemeView({
         />
       )}
 
+      <Section
+        title={`TRENDING NOW (${trending.length})`}
+        caption="Raw attention: highest transaction count + live volume across the whole scan, regardless of setup. The crowd is here — that cuts both ways. Safety-check before entry."
+        signals={trending}
+        fetchedAt={fetchedAt}
+      />
       <Section
         title={`SURE PLAYS — 2x GRINDERS (${sure2x.length})`}
         caption="Highest-probability tier: established tokens, deep liquidity, buyers in control, bounce confirmed. Biggest size, smallest target — take the 1.5-2x and leave."

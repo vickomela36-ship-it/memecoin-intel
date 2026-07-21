@@ -90,6 +90,14 @@ export function addWatch(item: Omit<WatchItem, "addedAt">): boolean {
   if (list.some((w) => w.address === item.address)) return false;
   list.push({ ...item, addedAt: Date.now() });
   write(WATCH_KEY, list);
+  // Every watchlist add auto-triggers a safety check popup (app-wide listener)
+  if (typeof window !== "undefined" && item.address) {
+    window.dispatchEvent(
+      new CustomEvent("mi:watch-added", {
+        detail: { address: item.address, symbol: item.symbol },
+      })
+    );
+  }
   return true;
 }
 

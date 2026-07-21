@@ -20,6 +20,7 @@ import IntelView from "@/components/views/IntelView";
 import CreatorsView from "@/components/views/CreatorsView";
 import LpView from "@/components/views/LpView";
 import Education from "@/components/Education";
+import WatchSafetyPopup from "@/components/WatchSafetyPopup";
 import type { TabId } from "@/types";
 import { initSync } from "@/lib/sync";
 
@@ -41,8 +42,13 @@ export default function Home() {
       localStorage.setItem("mi_edu_seen", "1");
       setShowEdu(true);
     }
-    // Signal cards can deep-link into the Safety tab
-    const onGotoSafety = () => setTab("intel");
+    // Signal cards can deep-link into the Safety tab. The Safety view mounts
+    // AFTER this event fires, so stash the CA for it to consume on mount.
+    const onGotoSafety = (e: Event) => {
+      const addr = (e as CustomEvent<string>).detail;
+      if (addr) sessionStorage.setItem("mi_pending_safety", addr);
+      setTab("intel");
+    };
     window.addEventListener("mi:goto-safety", onGotoSafety);
     // Cross-device sync: pull remote state on boot, push changes every 20s.
     // Reload once per session when a newer remote snapshot lands.
@@ -133,6 +139,7 @@ export default function Home() {
       </div>
 
       {showEdu && <Education onClose={() => setShowEdu(false)} />}
+      <WatchSafetyPopup />
 
       <TrackRecord refreshKey={trackKey} />
     </main>

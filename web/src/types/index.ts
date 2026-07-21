@@ -76,7 +76,8 @@ export interface MemeSignal {
     | "SURE"
     | "MOMENTUM"
     | "PUMPFUN"
-    | "VOLUME";
+    | "VOLUME"
+    | "TRENDING";
   /** Human category, e.g. "2x GRINDER", "3x RECOVERY", "MOMENTUM RIDER" */
   playType: string;
   address: string;
@@ -129,6 +130,7 @@ export interface NarrativeIntel {
 export interface MemeScanResult {
   pulse: ScanPulse;
   metas: NarrativeIntel[];
+  trending: MemeSignal[];
   sure2x: MemeSignal[];
   recovery3x: MemeSignal[];
   momentum: MemeSignal[];

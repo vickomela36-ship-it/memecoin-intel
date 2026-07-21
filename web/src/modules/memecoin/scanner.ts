@@ -221,6 +221,7 @@ export async function runMemeScan(
   const pumpfun: MemeSignal[] = [];
   const launches: MemeSignal[] = [];
   const degens: MemeSignal[] = [];
+  const trendingPool: { pair: DexPair; ageHours: number; boosts: number; heat: number; txns1h: number }[] = [];
   const now = Date.now();
 
   // Pulse + narrative accumulators
@@ -268,6 +269,18 @@ export async function runMemeScan(
     const bsr = buySellRatio(pair);
     const turnover = fdv > 0 ? vol24 / fdv : 0;
     const hourlyRatio = vol24 > 0 && volH1 > 0 ? (volH1 * 24) / vol24 : 0;
+
+    // Trending pool: raw attention — txn count, live volume, boosts, movement
+    const t1h = pair.txns?.h1;
+    const txns1h = num(t1h?.buys) + num(t1h?.sells);
+    if (vol24 >= 100_000 && txns1h >= 150) {
+      const heat =
+        txns1h +
+        volH1 / 500 +
+        boosts * 100 +
+        Math.min(50, Math.abs(h1)) * 8;
+      trendingPool.push({ pair, ageHours, boosts, heat, txns1h });
+    }
 
     // Every category evaluated independently — multi-section membership.
 
@@ -393,9 +406,45 @@ export async function runMemeScan(
     totalVol24hUsd: totalVol,
   };
 
+  // ── Trending: rank by heat, score relative to the hottest ───────────
+  trendingPool.sort((a, b) => b.heat - a.heat);
+  const maxHeat = trendingPool[0]?.heat ?? 1;
+  const trending: MemeSignal[] = trendingPool.slice(0, 8).map((t) => {
+    const p = t.pair;
+    const score = Math.max(50, Math.round((t.heat / maxHeat) * 100));
+    const reasons = [
+      `${t.txns1h.toLocaleString()} transactions in the last hour`,
+      `$${(num(p.volume?.h1) / 1000).toFixed(0)}K hourly volume`,
+    ];
+    if (t.boosts > 0) reasons.push(`DexScreener boosted (${t.boosts})`);
+    const sig = baseSignal(
+      p,
+      "TRENDING",
+      "TRENDING",
+      t.ageHours,
+      t.boosts,
+      {
+        score,
+        components: [
+          { name: "Txns (1h)", weightPct: 40, score: Math.min(100, t.txns1h / 10), detail: String(t.txns1h) },
+          { name: "Hourly volume", weightPct: 30, score: Math.min(100, num(p.volume?.h1) / 2000), detail: `$${(num(p.volume?.h1) / 1000).toFixed(0)}K` },
+          { name: "1h move", weightPct: 20, score: Math.min(100, Math.abs(num(p.priceChange?.h1)) * 2), detail: `${num(p.priceChange?.h1).toFixed(1)}%` },
+          { name: "Boosts", weightPct: 10, score: Math.min(100, t.boosts * 20), detail: String(t.boosts) },
+        ],
+        reasons,
+        warnings: [
+          "Trending measures attention, not quality — the crowd is here, which cuts both ways. Check the safety card before entry.",
+        ],
+      },
+      "5x POTENTIAL"
+    );
+    return sig;
+  });
+
   const result: MemeScanResult = {
     pulse,
     metas: buildMetas(narrAcc),
+    trending,
     sure2x: sure2x.slice(0, 8),
     recovery3x: recovery3x.slice(0, 8),
     momentum: momentum.slice(0, 8),

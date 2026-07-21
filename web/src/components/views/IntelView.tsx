@@ -112,9 +112,19 @@ export default function IntelView() {
   const lastMint = useRef<string | null>(null);
 
   useEffect(() => {
+    // A redirect from another tab stashes the CA before this view mounts —
+    // consume it, paste it into the bar, and run the check automatically.
+    const pending = sessionStorage.getItem("mi_pending_safety");
+    if (pending) {
+      sessionStorage.removeItem("mi_pending_safety");
+      setInput(pending);
+      void run(false, pending);
+    }
+    // Live listener covers redirects fired while this view is already open
     const onGoto = (e: Event) => {
       const addr = (e as CustomEvent<string>).detail;
       if (!addr) return;
+      sessionStorage.removeItem("mi_pending_safety");
       setInput(addr);
       void run(false, addr);
     };
