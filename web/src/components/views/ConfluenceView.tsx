@@ -41,7 +41,7 @@ const TIER_TARGET: Record<string, number> = {
   "100x MOONSHOT": 20,
 };
 
-const HIGH_OCTANE = new Set(["10x RUNNER", "100x MOONSHOT", "NEW LAUNCH", "PUMPFUN RELEASE"]);
+const HIGH_OCTANE = new Set(["10x RUNNER", "100x MOONSHOT", "NEW LAUNCH", "PUMPFUN RELEASE", "HOT"]);
 
 /**
  * Indicator-and-sentiment-driven horizon projections (1h / 4h / 8h / 24h).
@@ -151,8 +151,8 @@ export default function ConfluenceView() {
     if (!data) return [];
     const byAddress = new Map<string, MemeSignal[]>();
     const sections: MemeSignal[][] = [
-      data.sure2x, data.recovery3x, data.momentum, data.volumePlays,
-      data.higherCap, data.pumpfun, data.launches, data.degens,
+      data.hot, data.trending, data.sure2x, data.recovery3x, data.momentum,
+      data.volumePlays, data.higherCap, data.pumpfun, data.launches, data.degens,
     ];
     for (const section of sections ?? []) {
       for (const s of section ?? []) {

@@ -89,6 +89,7 @@ function memeAlertCandidates(
     });
   };
 
+  for (const s of scan.hot.filter((x) => x.score >= 72)) push(s, "🔥 HOT");
   for (const s of scan.sure2x) push(s, "2x GRINDER");
   for (const s of scan.momentum.filter((x) => x.score >= 75)) push(s, "MOMENTUM RIDER");
   for (const s of scan.pumpfun.filter((x) => x.score >= 72)) push(s, "PUMPFUN RELEASE");

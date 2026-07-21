@@ -35,6 +35,7 @@ const LOG_TYPE: Record<MemeSignal["mode"], string> = {
   LAUNCH: "launch",
   DEGEN: "degen",
   TRENDING: "trending",
+  HOT: "hot",
 };
 
 export default function MemeView({
@@ -62,6 +63,7 @@ export default function MemeView({
 
   const fetchedAt = useMemo(() => Date.now(), [data]);
   const trending = data?.trending ?? [];
+  const hot = data?.hot ?? [];
   const sure2x = data?.sure2x ?? [];
   const recovery3x = data?.recovery3x ?? [];
   const momentum = data?.momentum ?? [];
@@ -74,10 +76,10 @@ export default function MemeView({
   const pulse = data?.pulse;
   const all = useMemo(
     () => [
-      ...trending, ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
+      ...hot, ...trending, ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
       ...higherCap, ...pumpfun, ...launches, ...degens,
     ],
-    [trending, sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
+    [hot, trending, sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
   );
 
   useEffect(() => {
@@ -153,9 +155,11 @@ export default function MemeView({
                   : `updated ${timeAgo(fetchedAt)}`}
             </span>
           </div>
-          <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 mt-3">
+          <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-12 gap-2 mt-3">
             <Stat label="Found" value={pulse.discovered} />
             <Stat label="Analyzed" value={pulse.analyzed} />
+            <Stat label="Hot" value={hot.length} hot={hot.length > 0} />
+            <Stat label="Trending" value={trending.length} />
             <Stat label="2x Grind" value={sure2x.length} hot={sure2x.length > 0} />
             <Stat label="3x Rec" value={recovery3x.length} />
             <Stat label="Momentum" value={momentum.length} />
@@ -267,8 +271,14 @@ export default function MemeView({
       )}
 
       <Section
+        title={`🔥 HOT — SNIPER FILTER (${hot.length})`}
+        caption="The @web3_blizz recipe: <72h old, $10K+ liquidity, $200K–$1M mcap sweet spot, real attention, buyers in control — rugcheck-gated. The 20–40x hunting grounds. Size like moonshots."
+        signals={hot}
+        fetchedAt={fetchedAt}
+      />
+      <Section
         title={`TRENDING NOW (${trending.length})`}
-        caption="Raw attention: highest transaction count + live volume across the whole scan, regardless of setup. The crowd is here — that cuts both ways. Safety-check before entry."
+        caption="Raw attention across the whole scan, now VALIDATED: each token is graded LIKELY SEND / POSSIBLE / CHASING RISK on continuation signals, with a projected upside. The crowd is here — that cuts both ways."
         signals={trending}
         fetchedAt={fetchedAt}
       />

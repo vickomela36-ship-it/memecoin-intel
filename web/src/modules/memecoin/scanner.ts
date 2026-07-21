@@ -7,11 +7,13 @@ import type {
 } from "@/types";
 import { bestSolanaPair, discoverTokens, fetchPairsBatch } from "./fetchers";
 import {
+  HOT_MIN,
   LAUNCH_MIN,
   MOMENTUM_MIN,
   RECOVERY_MIN,
   SURE2X_MIN,
   VOLUME_MIN,
+  scoreHot,
   scoreLaunch,
   scoreMomentum,
   scoreRecovery,
@@ -221,6 +223,7 @@ export async function runMemeScan(
   const pumpfun: MemeSignal[] = [];
   const launches: MemeSignal[] = [];
   const degens: MemeSignal[] = [];
+  const hot: MemeSignal[] = [];
   const trendingPool: { pair: DexPair; ageHours: number; boosts: number; heat: number; txns1h: number }[] = [];
   const now = Date.now();
 
@@ -283,6 +286,20 @@ export async function runMemeScan(
     }
 
     // Every category evaluated independently — multi-section membership.
+
+    // HOT — the guide's sniper filter: <72h, $10K+ liq, $200K–$1M mcap
+    if (
+      ageHours < 72 &&
+      liq >= 10_000 &&
+      fdv >= 100_000 &&
+      fdv <= 3_000_000 &&
+      vol24 >= 50_000
+    ) {
+      const scored = scoreHot(pair, ageHours, boosts);
+      if (scored.score >= HOT_MIN) {
+        hot.push(baseSignal(pair, "HOT", "HOT", ageHours, boosts, scored, "10x RUNNER"));
+      }
+    }
 
     // New launches (<24h)
     if (ageHours < 24) {
@@ -406,17 +423,54 @@ export async function runMemeScan(
     totalVol24hUsd: totalVol,
   };
 
-  // ── Trending: rank by heat, score relative to the hottest ───────────
+  // ── Trending: rank by heat, then VALIDATE "likely to send" ──────────
+  // Attention alone isn't a signal — validate each trending token on the
+  // conditions that historically precede continuation, and project upside.
   trendingPool.sort((a, b) => b.heat - a.heat);
   const maxHeat = trendingPool[0]?.heat ?? 1;
   const trending: MemeSignal[] = trendingPool.slice(0, 8).map((t) => {
     const p = t.pair;
     const score = Math.max(50, Math.round((t.heat / maxHeat) * 100));
+    const h1 = num(p.priceChange?.h1);
+    const h6 = num(p.priceChange?.h6);
+    const m5 = num(p.priceChange?.m5);
+    const volH1 = num(p.volume?.h1);
+    const v24 = num(p.volume?.h24);
+    const liq = num(p.liquidity?.usd);
+    const fdv = num(p.fdv);
+    const bsr = buySellRatio(p);
+
+    // Send validation (0-100): each check is a continuation precondition
+    let v = 0;
+    const vNotes: string[] = [];
+    if (bsr >= 1.3) { v += 25; vNotes.push(`buyers in control (${bsr.toFixed(1)}x)`); }
+    if (v24 > 0 && (volH1 * 24) / v24 >= 1.5) { v += 20; vNotes.push("volume still accelerating"); }
+    if (h1 > 0 && h6 <= h1 * 2) { v += 20; vNotes.push("move is fresh, not extended"); }
+    if (fdv > 0 && liq / fdv >= 0.04) { v += 15; vNotes.push("liquidity deep enough to exit"); }
+    if (m5 >= 0) { v += 10; vNotes.push("5m holding"); }
+    if (t.boosts > 0) v += 10;
+
+    const tier = v >= 70 ? "LIKELY SEND" : v >= 45 ? "POSSIBLE" : "CHASING RISK";
+    // Projected upside: validation strength x cap headroom, momentum-capped
+    const capMult = fdv > 0 && fdv < 500_000 ? 3 : fdv < 2_000_000 ? 2 : fdv < 10_000_000 ? 1.4 : 1.1;
+    const upside = Math.round(Math.min(300, Math.max(10, v * 0.6 * capMult)));
+
     const reasons = [
       `${t.txns1h.toLocaleString()} transactions in the last hour`,
-      `$${(num(p.volume?.h1) / 1000).toFixed(0)}K hourly volume`,
+      `$${(volH1 / 1000).toFixed(0)}K hourly volume`,
+      vNotes.length
+        ? `Send validation ${v}/100: ${vNotes.join(", ")}`
+        : `Send validation ${v}/100: no continuation signals confirmed`,
+      `Projected upside if it sends: ~+${upside}% (24h, heuristic — capped by mcap headroom)`,
     ];
     if (t.boosts > 0) reasons.push(`DexScreener boosted (${t.boosts})`);
+
+    const warnings = [
+      tier === "CHASING RISK"
+        ? "Attention WITHOUT continuation signals — this is what chasing looks like. The crowd may already be exiting on you."
+        : "Trending measures attention, not quality. Check the safety card before entry.",
+    ];
+
     const sig = baseSignal(
       p,
       "TRENDING",
@@ -426,25 +480,28 @@ export async function runMemeScan(
       {
         score,
         components: [
-          { name: "Txns (1h)", weightPct: 40, score: Math.min(100, t.txns1h / 10), detail: String(t.txns1h) },
-          { name: "Hourly volume", weightPct: 30, score: Math.min(100, num(p.volume?.h1) / 2000), detail: `$${(num(p.volume?.h1) / 1000).toFixed(0)}K` },
-          { name: "1h move", weightPct: 20, score: Math.min(100, Math.abs(num(p.priceChange?.h1)) * 2), detail: `${num(p.priceChange?.h1).toFixed(1)}%` },
-          { name: "Boosts", weightPct: 10, score: Math.min(100, t.boosts * 20), detail: String(t.boosts) },
+          { name: "Txns (1h)", weightPct: 30, score: Math.min(100, t.txns1h / 10), detail: String(t.txns1h) },
+          { name: "Hourly volume", weightPct: 25, score: Math.min(100, volH1 / 2000), detail: `$${(volH1 / 1000).toFixed(0)}K` },
+          { name: "Send validation", weightPct: 30, score: v, detail: `${vNotes.length}/5 checks passed` },
+          { name: "1h move", weightPct: 10, score: Math.min(100, Math.abs(h1) * 2), detail: `${h1.toFixed(1)}%` },
+          { name: "Boosts", weightPct: 5, score: Math.min(100, t.boosts * 20), detail: String(t.boosts) },
         ],
         reasons,
-        warnings: [
-          "Trending measures attention, not quality — the crowd is here, which cuts both ways. Check the safety card before entry.",
-        ],
+        warnings,
       },
-      "5x POTENTIAL"
+      tier === "LIKELY SEND" ? "5x POTENTIAL" : "3x POSSIBLE"
     );
+    sig.tier = tier;
+    sig.riskLevel = tier === "CHASING RISK" ? "EXTREME" : tier === "POSSIBLE" ? "VERY HIGH" : "HIGH";
     return sig;
   });
 
+  hot.sort((a, b) => b.score - a.score);
   const result: MemeScanResult = {
     pulse,
     metas: buildMetas(narrAcc),
     trending,
+    hot: hot.slice(0, 8),
     sure2x: sure2x.slice(0, 8),
     recovery3x: recovery3x.slice(0, 8),
     momentum: momentum.slice(0, 8),
@@ -455,14 +512,15 @@ export async function runMemeScan(
     degens: degens.slice(0, 10),
   };
 
-  // Rugcheck: pumpfun releases and launches get priority (security gate),
-  // then degens. DANGER-flagged tokens are REMOVED from the pumpfun section
-  // ("passes enough security checks") but stay visible in degens, flagged.
+  // Rugcheck: HOT + pumpfun + launches get the security gate (DANGER
+  // tokens REMOVED — the guide's rule: rugcheck before you ape), trending
+  // + degens get flagged but stay visible.
   const dangers = await annotateRugcheck(
-    [...result.pumpfun, ...result.launches, ...result.degens],
+    [...result.hot, ...result.pumpfun, ...result.launches, ...result.trending, ...result.degens],
     opts.server ?? false
   );
   result.pumpfun = result.pumpfun.filter((s) => !dangers.has(s.address));
+  result.hot = result.hot.filter((s) => !dangers.has(s.address));
 
   return result;
 }

@@ -399,3 +399,77 @@ export function scoreVolume(
 
   return { score: clamp(score), components, reasons, warnings };
 }
+
+
+export const HOT_MIN = 65;
+
+/**
+ * "HOT" — the sniper recipe from the memecoin guide, encoded exactly:
+ * Solana, new pair (<72h), liquidity $10K+ (locked — rugcheck verifies),
+ * market cap $200K–$1M sweet spot, with real attention (txns) and buyers
+ * in control. These are the 20-40x hunting grounds; sized like moonshots.
+ */
+export function scoreHot(
+  pair: DexPair,
+  ageHours: number,
+  boosts: number
+): { score: number; components: ScoreComponent[]; reasons: string[]; warnings: string[] } {
+  const liq = num(pair.liquidity?.usd);
+  const fdv = num(pair.fdv);
+  const t1h = pair.txns?.h1;
+  const txns1h = num(t1h?.buys) + num(t1h?.sells);
+  const ratio = buySellRatio(pair);
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  const components: ScoreComponent[] = [];
+
+  // Market-cap window (30): $200K–$1M is the guide's sweet spot
+  let mcScore: number;
+  if (fdv >= 200_000 && fdv <= 1_000_000) {
+    mcScore = 100;
+    reasons.push(`In the $200K–$1M mcap sweet spot ($${(fdv / 1000).toFixed(0)}K)`);
+  } else if (fdv >= 100_000 && fdv < 200_000) mcScore = 70;
+  else if (fdv > 1_000_000 && fdv <= 3_000_000) mcScore = 60;
+  else mcScore = 25;
+  components.push({ name: "Mcap window ($200K–$1M)", weightPct: 30, score: mcScore, detail: `$${(fdv / 1000).toFixed(0)}K` });
+
+  // Liquidity floor (25): guide minimum $10K, more is better
+  let liqScore: number;
+  if (liq >= 50_000) liqScore = 100;
+  else if (liq >= 25_000) liqScore = 85;
+  else if (liq >= 10_000) liqScore = 70;
+  else liqScore = 15;
+  if (liq < 10_000) warnings.push("Below the guide's $10K liquidity floor");
+  components.push({ name: "Liquidity ($10K+ floor)", weightPct: 25, score: liqScore, detail: `$${(liq / 1000).toFixed(1)}K` });
+
+  // Age window (20): <72h, with 6-48h the balance of early-but-survived
+  let ageScore: number;
+  if (ageHours >= 6 && ageHours <= 48) ageScore = 100;
+  else if (ageHours < 6) {
+    ageScore = 70;
+    warnings.push("Very fresh — sniper/rug window still open");
+  } else ageScore = 75; // 48-72h
+  components.push({ name: "Pair age (<72h)", weightPct: 20, score: ageScore, detail: `${ageHours.toFixed(1)}h` });
+
+  // Attention (15): the "hit by multiple bots at once" proxy — live txns
+  let attnScore: number;
+  if (txns1h >= 300) { attnScore = 100; reasons.push(`${txns1h} txns in the last hour — real hype`); }
+  else if (txns1h >= 150) attnScore = 75;
+  else if (txns1h >= 75) attnScore = 50;
+  else attnScore = 25;
+  components.push({ name: "Attention (1h txns)", weightPct: 15, score: attnScore, detail: String(txns1h) });
+
+  // Buy pressure (10)
+  const bpScore = ratio >= 2 ? 100 : ratio >= 1.5 ? 75 : ratio >= 1.1 ? 55 : 20;
+  if (ratio >= 1.5) reasons.push(`Buyers in control (${ratio.toFixed(1)}x)`);
+  components.push({ name: "Buy pressure", weightPct: 10, score: bpScore, detail: `${ratio.toFixed(1)}x` });
+
+  let score = components.reduce((a, c) => a + c.score * (c.weightPct / 100), 0);
+  if (fdv > 0 && liq > 0 && liq / fdv < 0.02) {
+    score -= 15;
+    warnings.push(`Exit trap: liquidity only ${((liq / fdv) * 100).toFixed(1)}% of FDV`);
+  }
+  warnings.push("HOT = early + informed, not safe. Rugcheck runs automatically; DANGER tokens are removed from this section.");
+
+  return { score: clamp(score), components, reasons, warnings };
+}

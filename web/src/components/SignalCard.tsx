@@ -17,6 +17,7 @@ const MODE_COLOR: Record<MemeSignal["mode"], string> = {
   LAUNCH: "var(--signal-long)",
   DEGEN: "var(--signal-short)",
   TRENDING: "var(--signal-edge)",
+  HOT: "var(--signal-short)",
 };
 
 const TIER_COLOR: Record<string, string> = {
