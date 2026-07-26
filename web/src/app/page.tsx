@@ -9,17 +9,26 @@ import Settings, {
   loadSettings,
   type AppSettings,
 } from "@/components/Settings";
+import dynamic from "next/dynamic";
 import MemeView from "@/components/views/MemeView";
-import ChallengeView from "@/components/views/ChallengeView";
-import PortfolioView from "@/components/views/PortfolioView";
-import ConfluenceView from "@/components/views/ConfluenceView";
-import PositionsView from "@/components/views/PositionsView";
-import IntelView from "@/components/views/IntelView";
-import CreatorsView from "@/components/views/CreatorsView";
-import Education from "@/components/Education";
-import WatchSafetyPopup from "@/components/WatchSafetyPopup";
 import type { TabId } from "@/types";
 import { initSync } from "@/lib/sync";
+
+// Code-split every non-default surface so opening the Scanner never ships
+// Confluence/Safety/Creators/Positions/Portfolio/Challenge JS. They only
+// load when their tab is first opened.
+function PanelSkeleton() {
+  return <div className="card text-sm text-[var(--text-secondary)]">Loading…</div>;
+}
+
+const ConfluenceView = dynamic(() => import("@/components/views/ConfluenceView"), { loading: PanelSkeleton, ssr: false });
+const IntelView = dynamic(() => import("@/components/views/IntelView"), { loading: PanelSkeleton, ssr: false });
+const CreatorsView = dynamic(() => import("@/components/views/CreatorsView"), { loading: PanelSkeleton, ssr: false });
+const PositionsView = dynamic(() => import("@/components/views/PositionsView"), { loading: PanelSkeleton, ssr: false });
+const PortfolioView = dynamic(() => import("@/components/views/PortfolioView"), { loading: PanelSkeleton, ssr: false });
+const ChallengeView = dynamic(() => import("@/components/views/ChallengeView"), { loading: PanelSkeleton, ssr: false });
+const Education = dynamic(() => import("@/components/Education"), { ssr: false });
+const WatchSafetyPopup = dynamic(() => import("@/components/WatchSafetyPopup"), { ssr: false });
 
 export default function Home() {
   const [tab, setTab] = useState<TabId>("memecoin");

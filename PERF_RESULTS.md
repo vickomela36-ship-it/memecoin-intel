@@ -48,7 +48,27 @@ calls in Portfolio + Positions + entry-check.
 so Vercel's edge serves most requests without touching the function, and a
 throttled provider serves last-good rather than blanking.
 
-## Slice 3 — code-split + progressive paint (pending)
+## Slice 3 — code-split + progressive paint
+
+**What changed:** every non-default view (`Confluence`, `Safety`, `Creators`,
+`Positions`, `Portfolio`, `Challenge`, `Education`, `WatchSafetyPopup`) is now
+`next/dynamic` lazy-loaded with a panel skeleton — only the Scanner loads on
+first paint; the rest fetch their JS when their tab is first opened.
+
+| Metric | Before (post-strip) | After code-split | Δ |
+|---|---|---|---|
+| Main route (`/`) JS | 36.7 kB | **15.7 kB** | **−57%** |
+| First Load JS | 124 kB | **108 kB** | −16 kB |
+| Views shipped on first paint | 7 | **1** (Scanner) + skeletons | −6 |
+
+Opening the Scanner no longer downloads the Positions/Portfolio/Challenge/
+Safety/Creators/Confluence code. Combined with the Slice-0 strip (which
+removed the football/perp/LP/Recharts weight entirely), first-paint JS is a
+fraction of the pre-v2 bundle.
+
+## Slice 4 — unified sentiment engine (pending)
+## Slice 5 — signal efficiency / per-type hit-rate (pending)
+## Slice 6 — UI pass (design plan first) (pending)
 ## Slice 4 — unified sentiment engine (pending)
 ## Slice 5 — signal efficiency / per-type hit-rate (pending)
 ## Slice 6 — UI pass (design plan first) (pending)
