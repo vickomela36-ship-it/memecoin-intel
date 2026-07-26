@@ -71,6 +71,12 @@ function flowScore(inp: SentimentInput): {
   return { score: Math.round(score), components };
 }
 
+/** Instantaneous score + confidence WITHOUT touching history — safe to call
+ *  from logging paths that shouldn't perturb the velocity ring buffer. */
+export function instantSentiment(inp: SentimentInput): { score: number; confidence: number } {
+  return { score: flowScore(inp).score, confidence: confidenceFrom(inp.txns1h) };
+}
+
 /** Confidence scales with sample size — 3 txns ≠ 3,000. */
 function confidenceFrom(txns1h: number): number {
   if (txns1h >= 1000) return 0.95;

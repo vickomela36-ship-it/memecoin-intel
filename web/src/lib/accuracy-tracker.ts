@@ -109,6 +109,28 @@ export function moduleAccuracy(module: ModuleId): ModuleAccuracy {
   };
 }
 
+/**
+ * Per-signal-TYPE precision — "this flag has been right X% over N logged
+ * instances." Returns null rate until >= 5 resolved so we never show a
+ * meaningless number. `belowChance` flags types no better than a coin flip.
+ */
+export function typeAccuracy(
+  module: ModuleId,
+  type: string
+): { resolved: number; hits: number; rate: number | null; belowChance: boolean } {
+  const logs = getLogs().filter(
+    (l) => l.module === module && l.signal.type === type && l.outcome.resolved && l.outcome.result !== "voided"
+  );
+  const hits = logs.filter((l) => l.outcome.result === "hit").length;
+  const rate = logs.length >= 5 ? hits / logs.length : null;
+  return {
+    resolved: logs.length,
+    hits,
+    rate,
+    belowChance: rate !== null && rate < 0.5,
+  };
+}
+
 export function exportLogsJson(): string {
   return JSON.stringify(getLogs(), null, 2);
 }

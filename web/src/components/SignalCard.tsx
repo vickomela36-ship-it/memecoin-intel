@@ -4,9 +4,24 @@ import { useState } from "react";
 import { cx, fmtPrice, fmtUsd, timeAgo } from "@/lib/utils";
 import { positionPlan } from "@/lib/challenge";
 import { addWatch, getChallenge } from "@/lib/storage";
+import { typeAccuracy } from "@/lib/accuracy-tracker";
 import type { MemeSignal } from "@/types";
 import ScoreBar from "./ScoreBar";
 import Sentiment from "./Sentiment";
+
+// Mirror of MemeView's LOG_TYPE so a card can look up its own hit-rate.
+const LOG_TYPE: Record<MemeSignal["mode"], string> = {
+  SURE: "sure-2x",
+  RECOVERY: "recovery-3x",
+  MOMENTUM: "momentum",
+  VOLUME: "volume",
+  "HIGHER-CAP": "higher-cap",
+  PUMPFUN: "pumpfun",
+  LAUNCH: "launch",
+  DEGEN: "degen",
+  TRENDING: "trending",
+  HOT: "hot",
+};
 
 const MODE_COLOR: Record<MemeSignal["mode"], string> = {
   SURE: "var(--signal-long)",
@@ -43,6 +58,8 @@ export default function SignalCard({
   const ch = getChallenge();
   const bankroll = ch.active ? ch.currentBankroll : 100;
   const plan = positionPlan(bankroll, signal.sizingKey);
+  // Per-type historical precision from Track Record (null until 5 resolved)
+  const acc = typeAccuracy("memecoin", LOG_TYPE[signal.mode]);
 
   function handleWatch() {
     const ok = addWatch({
@@ -94,6 +111,18 @@ export default function SignalCard({
       <div className="mt-2">
         <ScoreBar score={signal.score} color={clr} />
       </div>
+
+      {/* Per-type historical precision — honesty on whether this flag works */}
+      {acc.rate !== null && (
+        <div
+          className="text-xs font-mono-display mt-1"
+          style={{ color: acc.belowChance ? "var(--signal-short)" : "var(--text-tertiary)" }}
+        >
+          {signal.playType} track record: {Math.round(acc.rate * 100)}% hit over{" "}
+          {acc.resolved} logged
+          {acc.belowChance && " · no better than chance — weight lightly"}
+        </div>
+      )}
 
       {/* Stat grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 mt-3 text-sm">

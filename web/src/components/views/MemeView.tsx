@@ -7,6 +7,7 @@ import RegimeBanner from "@/components/RegimeBanner";
 import WhaleWatch from "@/components/WhaleWatch";
 import AccuracyBadge from "@/components/AccuracyBadge";
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
+import { instantSentiment } from "@/lib/sentiment";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
 import { fmtUsd, jsonFetcher, timeAgo } from "@/lib/utils";
 import type { MemeScanResult, MemeSignal } from "@/types";
@@ -86,7 +87,7 @@ export default function MemeView({
     onStatus(all.length > 0);
   }, [all, onStatus]);
 
-  // Log fired signals
+  // Log fired signals + strong sentiment readings (measured over time)
   useEffect(() => {
     if (!all.length) return;
     for (const s of all) {
@@ -102,6 +103,25 @@ export default function MemeView({
         },
         priceAtSignal: s.priceUsd,
       });
+      // Log high-confidence, directional sentiment so its predictive value
+      // is measured (resolved directionally: bull ⇒ price up in 24h).
+      const sent = instantSentiment({
+        address: s.address, buySellRatio: s.buySellRatio, volH1: s.volH1,
+        vol24h: s.vol24h, txns1h: s.txns1h, m5: s.m5, h1: s.h1,
+      });
+      if (sent.confidence >= 0.65 && Math.abs(sent.score) >= 40) {
+        logSignal({
+          module: "memecoin",
+          signal: {
+            type: sent.score > 0 ? "sentiment-bull" : "sentiment-bear",
+            target: s.address,
+            direction: sent.score > 0 ? "bullish" : "bearish",
+            score: sent.score,
+            details: { symbol: s.symbol, confidence: sent.confidence },
+          },
+          priceAtSignal: s.priceUsd,
+        });
+      }
     }
     onLogged();
   }, [all, onLogged]);
@@ -118,8 +138,16 @@ export default function MemeView({
           resolveLog(log.id, "miss", null); // vanished from DexScreener = dead
           continue;
         }
-        const mult = HIT_MULT[log.signal.type] ?? 1.5;
-        const hit = price >= log.outcome.priceAtSignal * mult;
+        const entry = log.outcome.priceAtSignal;
+        let hit: boolean;
+        if (log.signal.type === "sentiment-bull") {
+          hit = price > entry; // directional: predicted up
+        } else if (log.signal.type === "sentiment-bear") {
+          hit = price < entry; // predicted down
+        } else {
+          const mult = HIT_MULT[log.signal.type] ?? 1.5;
+          hit = price >= entry * mult;
+        }
         resolveLog(log.id, hit ? "hit" : "miss", price);
       }
       if (pending.length) onLogged();
