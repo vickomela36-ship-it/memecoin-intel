@@ -108,3 +108,30 @@ states. Every looping/entrance/flash animation is killed under
 The +2 kB buys the display font, the two signature components, and full
 loading/stale/empty/error states — a deliberate, measured trade for the
 terminal feel, well under the pre-v2 baseline (124 kB).
+
+## Live runtime metrics — OPEN (blocked in build env)
+
+All numbers above are **build-time bundle deltas** — real, reproducible from
+`npm run build`. The field timings the baseline calls for (Lighthouse
+Performance/LCP/TBT/CLS, network waterfall) require reaching the deployed URL,
+and the sandboxed build environment's egress policy denies `vercel.app`
+(proxy returns a policy `connect_rejected`). They are therefore **not yet
+captured** — deliberately left blank rather than fabricated.
+
+**To fill this in**, run from any machine with normal network:
+
+```bash
+cd web && ./scripts/capture-perf.sh            # prod URL
+# or: ./scripts/capture-perf.sh https://<preview>.vercel.app/
+```
+
+It prints (and writes `web/perf-capture.md`) a paste-ready table:
+
+| Profile | Perf | FCP | LCP | TBT | CLS | TTI | Transfer |
+|---|---|---|---|---|---|---|---|
+| Mobile  | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Desktop | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+
+These are the before/after field numbers that make Pillar A's efficiency
+claims complete; the script also dumps `x-vercel-cache`/region headers so the
+edge-cache behavior of `/api/prices` and `/api/scan` is verifiable.
