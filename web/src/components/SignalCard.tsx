@@ -6,6 +6,7 @@ import { positionPlan } from "@/lib/challenge";
 import { addWatch, getChallenge } from "@/lib/storage";
 import type { MemeSignal } from "@/types";
 import ScoreBar from "./ScoreBar";
+import Sentiment from "./Sentiment";
 
 const MODE_COLOR: Record<MemeSignal["mode"], string> = {
   SURE: "var(--signal-long)",
@@ -147,6 +148,19 @@ export default function SignalCard({
           </span>
         )}
       </div>
+
+      {/* Unified sentiment — on-chain flow + velocity + divergence */}
+      <Sentiment
+        input={{
+          address: signal.address,
+          buySellRatio: signal.buySellRatio,
+          volH1: signal.volH1,
+          vol24h: signal.vol24h,
+          txns1h: signal.txns1h,
+          m5: signal.m5,
+          h1: signal.h1,
+        }}
+      />
 
       {/* Trade plan — sized from the live challenge bankroll */}
       <div
