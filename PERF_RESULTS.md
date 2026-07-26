@@ -66,9 +66,45 @@ Safety/Creators/Confluence code. Combined with the Slice-0 strip (which
 removed the football/perp/LP/Recharts weight entirely), first-paint JS is a
 fraction of the pre-v2 bundle.
 
-## Slice 4 — unified sentiment engine (pending)
-## Slice 5 — signal efficiency / per-type hit-rate (pending)
-## Slice 6 — UI pass (design plan first) (pending)
-## Slice 4 — unified sentiment engine (pending)
-## Slice 5 — signal efficiency / per-type hit-rate (pending)
-## Slice 6 — UI pass (design plan first) (pending)
+## Slice 4 — unified sentiment engine
+
+**What changed:** one explainable `SentimentSignal` contract
+(`src/lib/sentiment.ts`) built from on-chain flow only — buy/sell pressure
+(40%), volume acceleration (35%), transaction intensity (25%). Price is
+deliberately excluded so price-vs-sentiment **divergence** is a first-class
+output. Velocity/acceleration are real, tracked in a per-token localStorage
+ring buffer. A single `<Sentiment>` component renders on every card with a
+click-to-expand component table — nothing is a black box. Confidence scales
+with sample size (3 txns ≠ 3,000).
+
+## Slice 5 — per-signal-type hit-rate
+
+**What changed:** `typeAccuracy(module, type)` reports "this flag has been
+right X% over N logged instances," null until ≥5 resolved so no meaningless
+numbers show. Directional sentiment (conf ≥ 0.65, |score| ≥ 40) is logged and
+resolved directionally (bull ⇒ price up in 24h). Below-chance types are
+flagged "weight lightly." All accuracy is from real logged signals — nothing
+is simulated.
+
+## Slice 6 — Trench Terminal UI
+
+**What changed:** Solana-native palette (green `#14f195` / hot red `#ff4d6d`
+/ purple `#9945ff` reserved for edge+divergence / amber) on blue-black
+`#0a0e14`. Type system: Space Grotesk display face on headers, Inter body,
+JetBrains Mono with `tabular-nums` on every numeric so columns never shift as
+values tick. Signature elements: the **signal-fire** live-heat dot and the
+**divergence bar** (sentiment fills from the left, price from the right;
+glows purple when they pull apart). Live numbers flash green/red on change
+via `<TickValue>`. Full state coverage: shaped skeletons on cold start,
+`is-stale` dim veil during in-flight refetch, explicit empty and error
+states. Every looping/entrance/flash animation is killed under
+`prefers-reduced-motion`.
+
+| Metric | Before (Slice 3) | After UI | Δ |
+|---|---|---|---|
+| Main route (`/`) JS | 15.7 kB | 17.9 kB | +2.2 kB (fonts + fire/divergence/tick) |
+| First Load JS | 108 kB | 110 kB | +2 kB |
+
+The +2 kB buys the display font, the two signature components, and full
+loading/stale/empty/error states — a deliberate, measured trade for the
+terminal feel, well under the pre-v2 baseline (124 kB).

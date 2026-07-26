@@ -18,7 +18,13 @@ import { initSync } from "@/lib/sync";
 // Confluence/Safety/Creators/Positions/Portfolio/Challenge JS. They only
 // load when their tab is first opened.
 function PanelSkeleton() {
-  return <div className="card text-sm text-[var(--text-secondary)]">Loading…</div>;
+  return (
+    <div className="space-y-3" aria-busy="true" aria-label="loading panel">
+      <div className="skeleton h-9 w-2/5" />
+      <div className="skeleton h-28 w-full" />
+      <div className="skeleton h-28 w-full" />
+    </div>
+  );
 }
 
 const ConfluenceView = dynamic(() => import("@/components/views/ConfluenceView"), { loading: PanelSkeleton, ssr: false });
@@ -74,7 +80,7 @@ export default function Home() {
       <div className="sticky top-0 z-20 bg-[var(--bg-primary)]">
         <SignalStrip active={memeActive} />
         <header className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
-          <h1 className="font-mono-display text-lg tracking-widest">
+          <h1 className="font-display text-lg font-bold tracking-widest">
             MEMECOIN&nbsp;INTEL
           </h1>
           <div className="flex items-center gap-3">

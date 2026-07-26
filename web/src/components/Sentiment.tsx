@@ -28,15 +28,26 @@ export default function Sentiment({ input }: { input: SentimentInput }) {
     sig.acceleration > 3 ? "accelerating" : sig.acceleration < -3 ? "fading" : "steady";
   const lowConf = sig.confidence < 0.45;
 
+  // Signature divergence bar geometry — sentiment fills from the left, price
+  // from the right; each capped at half the track so the two reads face off.
+  const sentW = Math.min(50, Math.abs(sig.score) / 2);
+  const priceW = Math.min(50, Math.abs(input.h1) * 3);
+  const diverging = sig.divergence !== "none";
+
   return (
     <div
       className="mt-2 px-3 py-2 rounded-input text-sm"
       style={{ background: "var(--bg-elevated)", borderLeft: `3px solid ${clr}` }}
     >
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="font-mono-display">
+        <span className="font-mono-display flex items-center gap-2">
+          <span
+            className="signal-fire"
+            style={{ ["--fire-color" as string]: clr }}
+            aria-hidden
+          />
           <span className="text-[var(--text-secondary)]">SENTIMENT</span>{" "}
-          <b style={{ color: clr }}>
+          <b style={{ color: clr }} className="tabular">
             {sig.score >= 0 ? "+" : ""}
             {sig.score}
           </b>{" "}
@@ -58,6 +69,27 @@ export default function Sentiment({ input }: { input: SentimentInput }) {
           </span>
           {Math.round(sig.confidence * 100)}%
         </span>
+      </div>
+
+      {/* Signature divergence bar — sentiment (left) vs price (right) */}
+      <div
+        className={`divergence-bar mt-2${diverging ? " dv-active" : ""}`}
+        role="img"
+        aria-label={`sentiment magnitude ${Math.abs(sig.score)}, price move ${input.h1.toFixed(1)}%`}
+      >
+        <span className="dv-sent" style={{ width: `${sentW}%` }} />
+        <span
+          className="dv-price"
+          style={{
+            width: `${priceW}%`,
+            background: input.h1 >= 0 ? "var(--signal-long)" : "var(--signal-short)",
+            opacity: 0.55,
+          }}
+        />
+      </div>
+      <div className="flex justify-between text-[10px] font-mono-display text-[var(--text-tertiary)] mt-0.5">
+        <span>flow</span>
+        <span>price {input.h1 >= 0 ? "+" : ""}{input.h1.toFixed(1)}%</span>
       </div>
 
       {lowConf && (
