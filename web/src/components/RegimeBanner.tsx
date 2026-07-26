@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { computeRegime, type RegimeResult } from "@/lib/regime";
+import { computeRegime } from "@/lib/regime";
 import { getChallenge } from "@/lib/storage";
 import { getPositions } from "@/lib/discipline";
 
@@ -10,25 +9,6 @@ const STATE_COLOR = {
   NEUTRAL: "var(--signal-neutral)",
   COLD: "var(--signal-short)",
 } as const;
-
-/** Majors direction via CoinGecko 24h — cheap, no key. */
-async function fetchMajorsUp(): Promise<number> {
-  try {
-    const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true",
-      { cache: "no-store" }
-    );
-    if (!res.ok) return 1;
-    const d = await res.json();
-    return (
-      Number(d?.bitcoin?.usd_24h_change > 0) +
-      Number(d?.ethereum?.usd_24h_change > 0) +
-      Number(d?.solana?.usd_24h_change > 0)
-    );
-  } catch {
-    return 1;
-  }
-}
 
 /** Recent user hit-rate: closed positions + challenge trades, last 10. */
 function recentHitRate(): { rate: number | null; sample: number } {
@@ -48,21 +28,11 @@ export default function RegimeBanner({
   breadthPct: number;
   medianH24: number;
 }) {
-  const [regime, setRegime] = useState<RegimeResult | null>(null);
   const hit = recentHitRate();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchMajorsUp().then((majorsUp) => {
-      if (cancelled) return;
-      setRegime(computeRegime({ breadthPct, medianH24, majorsUp }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [breadthPct, medianH24]);
-
-  if (!regime) return null;
+  // Majors read is derived from Solana memecoin breadth itself — no external
+  // call. Strong breadth ⇒ risk-on ecosystem; weak ⇒ risk-off.
+  const majorsUp = breadthPct >= 55 ? 3 : breadthPct >= 45 ? 2 : breadthPct >= 35 ? 1 : 0;
+  const regime = computeRegime({ breadthPct, medianH24, majorsUp });
   const clr = STATE_COLOR[regime.state];
   const coldWeek = regime.state === "COLD" && hit.rate !== null && hit.rate < 0.4;
 
@@ -82,7 +52,7 @@ export default function RegimeBanner({
         </div>
         <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
           breadth {regime.inputs.breadthPct}% · median {regime.inputs.medianH24 >= 0 ? "+" : ""}
-          {regime.inputs.medianH24}% · majors {regime.inputs.majorsUp}/3 up
+          {regime.inputs.medianH24}% · trenches {regime.inputs.majorsUp}/3
         </span>
       </div>
       <div className="text-sm text-[var(--text-secondary)] mt-1">{regime.guidance}</div>

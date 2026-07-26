@@ -10,8 +10,6 @@ import type { ModuleAccuracy, ModuleId } from "@/types";
 
 const MODULES: { id: ModuleId; label: string }[] = [
   { id: "memecoin", label: "Memecoin Scanner" },
-  { id: "football", label: "Football Predictor" },
-  { id: "crypto", label: "Crypto Score" },
 ];
 
 export default function TrackRecord({ refreshKey }: { refreshKey: number }) {

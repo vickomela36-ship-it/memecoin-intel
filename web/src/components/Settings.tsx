@@ -4,12 +4,10 @@ import { useEffect, useState } from "react";
 import { getSyncId, getSyncStatus, linkSyncId } from "@/lib/sync";
 
 export interface AppSettings {
-  cryptoRefreshMs: number;
   memeRefreshMs: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  cryptoRefreshMs: 30_000,
   memeRefreshMs: 60_000,
 };
 
@@ -54,20 +52,8 @@ export default function Settings({
       {open && (
         <div className="absolute right-0 top-8 z-10 card w-64 space-y-3 shadow-xl">
           <div className="font-mono-display text-xs uppercase tracking-wider text-[var(--text-secondary)]">
-            Refresh intervals
+            Scanner refresh
           </div>
-          <label className="block text-sm">
-            <span className="text-[var(--text-secondary)] text-xs">Perp desk</span>
-            <select
-              value={settings.cryptoRefreshMs}
-              onChange={(e) => update({ cryptoRefreshMs: Number(e.target.value) })}
-              className="w-full mt-1 bg-[var(--bg-elevated)] rounded-input px-2 py-1 text-sm border border-[var(--border-subtle)]"
-            >
-              <option value={30_000}>30s</option>
-              <option value={60_000}>60s</option>
-              <option value={300_000}>5m</option>
-            </select>
-          </label>
           <label className="block text-sm">
             <span className="text-[var(--text-secondary)] text-xs">Memecoin scanner</span>
             <select
@@ -81,8 +67,8 @@ export default function Settings({
             </select>
           </label>
           <div className="text-xs text-[var(--text-tertiary)]">
-            Football refreshes every 30m — odds are cached server-side to
-            respect the 500 req/month free tier.
+            The scan is shared and cached server-side (60s), so a faster
+            interval here just re-reads the cache — it doesn&apos;t add load.
           </div>
 
           <SyncSection />

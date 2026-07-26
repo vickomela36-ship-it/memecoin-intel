@@ -177,33 +177,6 @@ export async function GET(req: NextRequest) {
     errors.push("creator ingest failed");
   }
 
-  // ── Perp squeeze alerts (EU region can reach Binance) ────────────────
-  try {
-    const { buildAllTickets } = await import("@/modules/crypto/perps");
-    const tickets = await buildAllTickets();
-    for (const t of tickets) {
-      const key = `perp-${t.symbol}-${t.direction}`;
-      if (t.squeezeWatch && t.confidence !== "LOW" && (await shouldAlert(`squeeze-${t.symbol}`))) {
-        const ok = await tgCall(token, "sendMessage", {
-          chat_id: chatId,
-          text: `⚡ <b>${t.display}</b> ${t.squeezeWatch}\nBias ${t.bias >= 0 ? "+" : ""}${t.bias} (${t.direction}) · funding ${t.fundingPct8h}%/8h · OI 24h ${t.oiChange24hPct >= 0 ? "+" : ""}${t.oiChange24hPct}%`,
-          parse_mode: "HTML",
-        });
-        if (ok) sent++;
-      } else if (t.confidence === "HIGH" && t.direction !== "STAND ASIDE" && (await shouldAlert(key))) {
-        const ok = await tgCall(token, "sendMessage", {
-          chat_id: chatId,
-          text:
-            `📐 <b>${t.display} ${t.direction}</b> — bias ${t.bias >= 0 ? "+" : ""}${t.bias} (HIGH)\n` +
-            `${t.regime}\nEntry ~${t.markPrice} · stop -${t.stopPct}% · TP 1.5R/3R · max ${t.maxLev}x`,
-          parse_mode: "HTML",
-        });
-        if (ok) sent++;
-      }
-    }
-  } catch {
-    errors.push("perp check unavailable from server region");
-  }
 
   return NextResponse.json({ ok: true, sent, errors });
 }
