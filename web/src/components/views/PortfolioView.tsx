@@ -8,8 +8,7 @@ import {
   updateWatchPeaks,
   type WatchItem,
 } from "@/lib/storage";
-import { bestSolanaPair, fetchPairsBatch } from "@/modules/memecoin/fetchers";
-import { fmtPrice, timeAgo } from "@/lib/utils";
+import { fetchPrices, fmtPrice, timeAgo } from "@/lib/utils";
 
 interface LivePrice {
   price: number;
@@ -42,17 +41,13 @@ export default function PortfolioView() {
     refreshingRef.current = true;
     setRefreshing(true);
     try {
-      const map = await fetchPairsBatch(list.map((w) => w.address));
+      const map = await fetchPrices(list.map((w) => w.address));
       const next = new Map<string, LivePrice>();
       const priceOnly = new Map<string, number>();
-      map.forEach((pairs, addr) => {
-        const best = bestSolanaPair(pairs);
-        if (!best) return;
-        const price = Number(best.priceUsd) || 0;
-        const h24 = Number(best.priceChange?.h24) || 0;
-        if (price > 0) {
-          next.set(addr, { price, h24 });
-          priceOnly.set(addr, price);
+      map.forEach((v, addr) => {
+        if (v.price > 0) {
+          next.set(addr, { price: v.price, h24: v.h24 });
+          priceOnly.set(addr, v.price);
         }
       });
       setLive(next);

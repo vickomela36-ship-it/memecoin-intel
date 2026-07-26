@@ -23,8 +23,7 @@ import {
   type DisciplineProfile,
 } from "@/lib/discipline";
 import { logTrade } from "@/lib/storage";
-import { bestSolanaPair, fetchPairsBatch } from "@/modules/memecoin/fetchers";
-import { timeAgo } from "@/lib/utils";
+import { fetchPrices, timeAgo } from "@/lib/utils";
 
 const COIN_TYPES: CoinType[] = ["meme", "utility", "ownership"];
 const CONVICTIONS: Conviction[] = ["LOW", "MEDIUM", "HIGH"];
@@ -49,12 +48,10 @@ export default function PositionsView() {
       .map((p) => p.address);
     if (!addrs.length) return;
     try {
-      const map = await fetchPairsBatch(addrs);
+      const map = await fetchPrices(addrs);
       const prices = new Map<string, number>();
-      map.forEach((pairs, addr) => {
-        const best = bestSolanaPair(pairs);
-        const price = Number(best?.priceUsd) || 0;
-        if (price > 0) prices.set(addr, price);
+      map.forEach((v, addr) => {
+        if (v.price > 0) prices.set(addr, v.price);
       });
       setPositions(applyPrices(prices));
     } catch {
@@ -82,11 +79,10 @@ export default function PositionsView() {
     let tokenH1: number | null = null;
     if (draft.address) {
       try {
-        const map = await fetchPairsBatch([draft.address]);
-        const best = bestSolanaPair(map.get(draft.address) ?? []);
-        tokenH1 = Number(best?.priceChange?.h1) || null;
-        const price = Number(best?.priceUsd) || 0;
-        if (price > 0) draft.entryPrice = price;
+        const map = await fetchPrices([draft.address]);
+        const row = map.get(draft.address);
+        tokenH1 = row ? row.h1 : null;
+        if (row && row.price > 0) draft.entryPrice = row.price;
       } catch {
         /* no live data — proceed without FOMO chart check */
       }

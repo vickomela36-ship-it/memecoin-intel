@@ -30,6 +30,25 @@ football + perp hooks no longer fire on load.
 
 ---
 
-## Slice 1 — one scan pipeline (pending)
-## Slice 2 — data-layer hygiene (pending)
+## Slice 1+2 — kill redundant client work
+
+**What changed:** global `SWRConfig` (dedupe + keep-previous-data) and a
+shared, edge-cached `/api/prices` route replacing direct client DexScreener
+calls in Portfolio + Positions + entry-check.
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| `/api/scan` fetches when Scanner + Confluence both open | 2 independent | **1** (coalesced by `dedupingInterval` 20s) | −1, and no thundering herd |
+| DexScreener calls from price polling | Portfolio + Positions each hit DexScreener directly every 60s, uncached, per device | **1 shared `/api/prices`** edge-cached 25s — DexScreener hit once/25s total regardless of components or devices | large cut under multi-device / multi-panel use |
+| Client refetch on tab focus | every focus | throttled 30s | fewer wasted calls |
+| Blank panels on revalidate | yes (data cleared) | **no** (`keepPreviousData`) | UX + fewer perceived reloads |
+| Provider keys in client | 0 (already) | 0 | maintained |
+
+`/api/prices` sets `Cache-Control: s-maxage=25, stale-while-revalidate=60`
+so Vercel's edge serves most requests without touching the function, and a
+throttled provider serves last-good rather than blanking.
+
 ## Slice 3 — code-split + progressive paint (pending)
+## Slice 4 — unified sentiment engine (pending)
+## Slice 5 — signal efficiency / per-type hit-rate (pending)
+## Slice 6 — UI pass (design plan first) (pending)

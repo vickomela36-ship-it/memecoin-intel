@@ -35,6 +35,31 @@ export function clamp(v: number, lo = 0, hi = 100): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** Shared cached price lookup — coalesced server-side via /api/prices. */
+export interface LivePriceRow {
+  price: number;
+  h24: number;
+  h1: number;
+}
+
+export async function fetchPrices(
+  addresses: string[]
+): Promise<Map<string, LivePriceRow>> {
+  const out = new Map<string, LivePriceRow>();
+  const clean = addresses.filter((a) => /^[A-Za-z0-9]{30,50}$/.test(a));
+  if (!clean.length) return out;
+  try {
+    const res = await fetch(`/api/prices?addrs=${clean.join(",")}`, { cache: "no-store" });
+    if (!res.ok) return out;
+    const data = await res.json();
+    const prices = (data?.prices ?? {}) as Record<string, LivePriceRow>;
+    for (const [addr, v] of Object.entries(prices)) out.set(addr, v);
+  } catch {
+    /* return partial */
+  }
+  return out;
+}
+
 export async function jsonFetcher<T = unknown>(url: string): Promise<T> {
   // no-store matters server-side: without it Next's data cache would freeze
   // DexScreener responses inside the cached scan route forever.
