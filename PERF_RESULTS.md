@@ -118,7 +118,16 @@ and the sandboxed build environment's egress policy denies `vercel.app`
 (proxy returns a policy `connect_rejected`). They are therefore **not yet
 captured** — deliberately left blank rather than fabricated.
 
-**To fill this in**, run from any machine with normal network:
+**To fill this in**, either let CI do it or run it yourself.
+
+*CI (automatic):* `.github/workflows/perf-capture.yml` runs on every successful
+Vercel deploy (`deployment_status`) and writes the table to the run's **job
+summary** + a downloadable **artifact** — no clicks, no fabrication, no
+commit-loop. To also record it into the tree, trigger the workflow manually
+from the Actions tab with `commit: true`; it appends to `web/perf-history.md`
+with `[skip ci]`.
+
+*Local (manual):* run from any machine with normal network:
 
 ```bash
 cd web && ./scripts/capture-perf.sh            # prod URL

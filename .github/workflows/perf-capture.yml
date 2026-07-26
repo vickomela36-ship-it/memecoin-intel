@@ -1,0 +1,97 @@
+name: Perf capture
+
+# Captures the live runtime metrics that PERF_BASELINE.md left open — the
+# ones the sandboxed build env can't reach because vercel.app is blocked
+# there. GitHub-hosted runners have normal egress, so they can.
+#
+# Runs automatically when a Vercel deployment succeeds (deployment_status),
+# and on demand via the Actions tab. Results always land in the run's job
+# summary + a downloadable artifact. Committing them back to the tree is an
+# explicit, manual-only choice (see the `commit` input) so an auto-deploy
+# never triggers a commit → redeploy → capture loop.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to test (defaults to the production deployment)"
+        required: false
+        default: "https://memecoin-intel-baoa.vercel.app/"
+      commit:
+        description: "Append the result to web/perf-history.md and commit it"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    # Auto-runs only on a SUCCESSFUL deploy; manual runs always proceed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Resolve the target URL: manual input wins, else the Vercel deploy URL
+      # from the deployment_status event, else the production fallback.
+      - name: Resolve target URL
+        id: target
+        env:
+          INPUT_URL: ${{ github.event.inputs.url }}
+          DEPLOY_URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          URL="${INPUT_URL:-${DEPLOY_URL:-https://memecoin-intel-baoa.vercel.app/}}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Testing: $URL"
+
+      - name: Capture perf
+        working-directory: web
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          chmod +x scripts/capture-perf.sh
+          ./scripts/capture-perf.sh "${{ steps.target.outputs.url }}"
+
+      # Always surface the table in the run's summary — zero clicks to read.
+      - name: Publish to job summary
+        if: always()
+        run: cat web/perf-capture.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-capture
+          path: web/perf-capture.md
+          if-no-files-found: warn
+
+      # Manual + opt-in only. `[skip ci]` keeps GitHub Actions from re-firing;
+      # the history file is append-only so deploy history accrues over time.
+      - name: Commit result (manual opt-in)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.commit == 'true'
+        run: |
+          cd web
+          {
+            echo ""
+            echo "### $(date -u '+%Y-%m-%d %H:%M UTC') — ${{ steps.target.outputs.url }}"
+            echo ""
+            cat perf-capture.md
+          } >> perf-history.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add perf-history.md
+          git commit -m "perf: capture live metrics [skip ci]" || {
+            echo "No changes to commit"; exit 0;
+          }
+          git push
