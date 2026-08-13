@@ -56,15 +56,34 @@ export async function GET() {
     // 0-3 heat proxy blending runners and how hot fresh launches are topping.
     const runnerHeat = runnersThisWeek >= 8 ? 3 : runnersThisWeek >= 3 ? 2 : runnersThisWeek >= 1 ? 1 : 0;
 
+    // Graduation rate from the PumpPortal WS sampler (rolling 24h of samples).
+    // gradRate = migrations / new tokens across the window — a real launchpad
+    // heat metric. Null when no samples have been collected yet.
+    let gradRate: number | null = null;
+    let gradSamples = 0;
+    try {
+      const raw = (await kv(["GET", "mi:grad:samples"])) as string | null;
+      const series: { at: number; newTokens: number; migrations: number }[] = raw ? JSON.parse(raw) : [];
+      const recent = series.filter((s) => now - s.at <= DAY);
+      const nTok = recent.reduce((s, r) => s + (r.newTokens || 0), 0);
+      const nMig = recent.reduce((s, r) => s + (r.migrations || 0), 0);
+      gradSamples = recent.length;
+      if (nTok > 0) gradRate = Number(((nMig / nTok) * 100).toFixed(2));
+    } catch {
+      /* no graduation data yet */
+    }
+
     return NextResponse.json(
       {
-        available: seenThisWeek > 0,
+        available: seenThisWeek > 0 || gradSamples > 0,
         runnersThisWeek,
         seenThisWeek,
         freshLaunchMedianMcap: Math.round(median(freshMcaps)),
         freshLaunchCount: freshMcaps.length,
         peakMedianMcap: Math.round(median(peakMcaps)),
         heat: runnerHeat,
+        graduationRate: gradRate,
+        graduationSamples: gradSamples,
       },
       { headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=600" } }
     );

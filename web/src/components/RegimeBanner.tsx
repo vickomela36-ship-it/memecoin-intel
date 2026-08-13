@@ -17,6 +17,8 @@ interface TrenchesResp {
   seenThisWeek: number;
   freshLaunchMedianMcap: number;
   freshLaunchCount: number;
+  graduationRate: number | null;
+  graduationSamples: number;
 }
 
 const STATE_COLOR = {
@@ -100,7 +102,12 @@ export default function RegimeBanner({
           {trenches.freshLaunchCount > 0 && (
             <span>fresh-launch median ${(trenches.freshLaunchMedianMcap / 1000).toFixed(0)}K</span>
           )}
-          <span>{trenches.seenThisWeek} tracked this week</span>
+          {trenches.graduationRate !== null && (
+            <span title={`${trenches.graduationSamples} samples, last 24h`}>
+              graduation {trenches.graduationRate}%
+            </span>
+          )}
+          {trenches.seenThisWeek > 0 && <span>{trenches.seenThisWeek} tracked this week</span>}
         </div>
       )}
       <div className="text-sm text-[var(--text-secondary)] mt-1">{regime.guidance}</div>

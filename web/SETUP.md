@@ -85,6 +85,35 @@ first, then the worker.)*
 | `BIRDEYE_API_KEY` | OHLCV for botted-chart + market-structure TA, whale flow | Set your own to avoid shared-key rate limits. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Outbound scan/HOT alerts | Optional. |
 | `CALLS_INGEST_SECRET` | Guards the `POST /api/calls` webhook | Optional; if set, ingest requests must include `"secret": "<value>"`. |
+| `PUMPPORTAL_API_KEY` | pump.fun graduation-rate sampling (trenches heat gauge) | Optional. See §5 below. Requires Postgres + the graduation cron. |
+
+---
+
+## 5. Graduation rate — PumpPortal (optional)
+
+Powers the **graduation rate** in the regime/trenches heat gauge — how many
+pump.fun tokens are graduating off the bonding curve relative to new launches.
+
+1. Get a PumpPortal data key from **pumpportal.fun**.
+2. Add the env var (keep it secret — never commit it):
+
+   ```
+   PUMPPORTAL_API_KEY=<your key>
+   ```
+3. This needs the sampling cron, already declared in `vercel.json`:
+   `/api/cron/graduations` every 15 min. It connects to the PumpPortal
+   WebSocket for ~25s, counts new-token vs migration events, and appends a
+   sample to Postgres. The trenches route averages a rolling 24h of samples
+   into the rate.
+
+> **Cron frequency & plan:** Vercel's **Hobby** plan runs crons at most **once
+> per day**, which makes the graduation rate a coarse daily estimate. **Pro**
+> allows the 15-min cadence for an accurate rolling rate. The metric is
+> labelled as a sampled estimate either way, and simply doesn't show until the
+> first sample lands.
+
+> The graduation rate needs both `PUMPPORTAL_API_KEY` **and** Postgres
+> (`DATABASE_URL`) — the cron writes samples there.
 
 ---
 

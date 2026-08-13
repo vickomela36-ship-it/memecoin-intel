@@ -14,6 +14,7 @@ export async function GET() {
   const helius = !!process.env.HELIUS_API_KEY;
   const birdeye = !!process.env.BIRDEYE_API_KEY;
   const telegram = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+  const pumpportal = !!process.env.PUMPPORTAL_API_KEY;
 
   return NextResponse.json({
     features: [
@@ -28,6 +29,8 @@ export async function GET() {
         powers: "OHLCV for botted-chart + market-structure TA, whale flow" },
       { key: "telegram", label: "Alerts (Telegram)", live: telegram,
         powers: "Outbound scan/HOT alerts" },
+      { key: "pumpportal", label: "Graduation feed (PumpPortal)", live: pumpportal,
+        powers: "pump.fun graduation-rate sampling for the trenches heat gauge (needs the /api/cron/graduations cron)" },
     ],
   });
 }
