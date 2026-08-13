@@ -23,7 +23,8 @@ import {
   type DisciplineProfile,
 } from "@/lib/discipline";
 import { logTrade } from "@/lib/storage";
-import { fetchPrices, timeAgo } from "@/lib/utils";
+import { fetchPrices, jsonFetcher, timeAgo } from "@/lib/utils";
+import type { SafetyReport } from "@/types";
 
 const COIN_TYPES: CoinType[] = ["meme", "utility", "ownership"];
 const CONVICTIONS: Conviction[] = ["LOW", "MEDIUM", "HIGH"];
@@ -36,6 +37,10 @@ export default function PositionsView() {
   const [checks, setChecks] = useState<EntryCheck[] | null>(null);
   const [pendingDraft, setPendingDraft] = useState<Position | null>(null);
   const [closing, setClosing] = useState<Position | null>(null);
+
+  // Live on-chain / narrative events per open position, for cross-feed
+  // invalidation alerts (creator selling, structure break, vamp risk).
+  const [intel, setIntel] = useState<Record<string, string[]>>({});
 
   const open = positions.filter((p) => p.status === "OPEN");
   const closed = positions.filter((p) => p.status === "CLOSED");
@@ -64,6 +69,34 @@ export default function PositionsView() {
     const id = setInterval(refresh, 60_000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // Cross-feed thesis-invalidation watch: pull each open position's safety
+  // report (server-cached 5 min) and derive adverse events that should quote
+  // the user's own invalidation back at them. Slow interval — few positions.
+  const refreshIntel = useCallback(async () => {
+    const addrs = getPositions()
+      .filter((p) => p.status === "OPEN" && p.address)
+      .map((p) => p.address);
+    for (const addr of Array.from(new Set(addrs))) {
+      try {
+        const r = await jsonFetcher<SafetyReport>(`/api/safety?mint=${addr}`);
+        const events: string[] = [];
+        if (r.creator?.status === "distributing") events.push("The creator wallet is distributing (selling).");
+        if (r.chart?.structure?.state === "DOWNTREND") events.push("Market structure just broke down to a downtrend.");
+        if (r.collision?.vampRisk) events.push("A vamp risk appeared — a better-named competitor is threatening the narrative.");
+        if (r.deep?.clusterTrend && r.deep.clusterTrend.startsWith("⚠")) events.push("A funding cluster is reducing (coordinated selling).");
+        setIntel((prev) => ({ ...prev, [addr]: events }));
+      } catch {
+        /* leave prior intel in place */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshIntel();
+    const id = setInterval(refreshIntel, 300_000);
+    return () => clearInterval(id);
+  }, [refreshIntel]);
 
   function persistPositions(next: Position[]) {
     savePositions(next);
@@ -173,6 +206,7 @@ export default function PositionsView() {
               key={p.id}
               p={p}
               profile={profile}
+              events={p.address ? intel[p.address] ?? [] : []}
               onChange={(next) => {
                 persistPositions(positions.map((x) => (x.id === next.id ? next : x)));
               }}
@@ -400,11 +434,13 @@ function NewPositionForm({
 function PositionCard({
   p,
   profile,
+  events,
   onChange,
   onClose,
 }: {
   p: Position;
   profile: DisciplineProfile;
+  events: string[];
   onChange: (p: Position) => void;
   onClose: () => void;
 }) {
@@ -474,6 +510,22 @@ function PositionCard({
           )}
         </div>
       </div>
+
+      {/* Cross-feed thesis-invalidation watch — quotes their own words when an
+          on-chain/narrative event fires, not just on price */}
+      {events.length > 0 && (
+        <div className="px-3 py-2 rounded-input text-sm" style={{ background: "var(--signal-short)15", border: "1px solid var(--signal-short)" }}>
+          <b style={{ color: "var(--signal-short)" }}>Thesis-invalidation watch:</b>
+          <ul className="mt-0.5 space-y-0.5">
+            {events.map((e, i) => (
+              <li key={i} style={{ color: "var(--signal-short)" }}>• {e}</li>
+            ))}
+          </ul>
+          <div className="mt-1 text-[var(--text-secondary)]">
+            You said you&apos;d sell if: <i>&quot;{p.invalidation}&quot;</i> — does this count?
+          </div>
+        </div>
+      )}
 
       {/* Stop-loss rule alert — quotes their own words */}
       {stopFiring && (
