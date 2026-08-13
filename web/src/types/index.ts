@@ -180,6 +180,7 @@ export interface BottedFlag {
   pattern: string;
   confidence: number;
   explain: string;
+  range: [number, number] | null; // offending candle index range, if localized
 }
 
 export interface NarrativeCompetitorLite {

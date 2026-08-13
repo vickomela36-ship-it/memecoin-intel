@@ -687,7 +687,7 @@ export async function GET(req: NextRequest) {
     verdict: worstOf(checks.filter((c) => c.verdict !== "unknown")),
     checks,
     coinType: ct,
-    botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain })),
+    botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain, range: b.range })),
     collision,
     chart,
     holders,

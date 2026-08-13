@@ -456,6 +456,7 @@ function PositionCard({
   const roundtripFiring =
     value !== null && profile.lifeChangingUsd > 0 && value >= profile.lifeChangingUsd && !p.roundtripAcked;
   const stopFiring = pnlPct !== null && pnlPct <= -40 && !p.stopAcked;
+  const upBig = pnlPct !== null && pnlPct >= 50;
   const thesisStale = ageDays >= 2 && p.thesisHistory.length === 1;
   const pendingLadder = p.ladder.find((l) => l.hit && l.complied === null);
 
@@ -594,8 +595,20 @@ function PositionCard({
         </div>
       )}
 
-      {/* Re-evaluation slider */}
-      <div className="px-3 py-2 rounded-input" style={{ background: "var(--bg-elevated)" }}>
+      {/* Re-evaluation slider — auto-emphasized when the position is up big */}
+      <div
+        className="px-3 py-2 rounded-input"
+        style={
+          upBig
+            ? { background: "var(--bg-elevated)", border: "1px solid var(--signal-long)" }
+            : { background: "var(--bg-elevated)" }
+        }
+      >
+        {upBig && (
+          <div className="text-xs font-mono-display mb-1" style={{ color: "var(--signal-long)" }}>
+            ▲ UP {pnlPct!.toFixed(0)}% — this is exactly when to re-evaluate. Greed moves the target; the question below doesn&apos;t.
+          </div>
+        )}
         <div className="text-sm mb-1">
           <b>Re-evaluate:</b> if you didn&apos;t own this and saw it at the current
           price right now — how much would you buy?

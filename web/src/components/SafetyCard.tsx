@@ -156,7 +156,11 @@ export default function SafetyCard({
               <ul className="px-3 pb-2 text-xs space-y-1">
                 {report.botted.map((b) => (
                   <li key={b.pattern}>
-                    <b>{b.pattern}</b> ({Math.round(b.confidence * 100)}%) — {b.explain}
+                    <b>{b.pattern}</b> ({Math.round(b.confidence * 100)}%)
+                    {b.range && (
+                      <span className="text-[var(--text-tertiary)]"> · candles {b.range[0]}–{b.range[1]}</span>
+                    )}{" "}
+                    — {b.explain}
                   </li>
                 ))}
               </ul>
