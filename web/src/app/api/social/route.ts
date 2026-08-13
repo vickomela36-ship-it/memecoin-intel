@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { rankPosts, timingContext, type RawPost } from "@/modules/social/analyze";
+import {
+  detectCoordinatedKOLs,
+  extractWallet,
+  rankPosts,
+  timingContext,
+  type RawPost,
+} from "@/modules/social/analyze";
+import { ingestKolPosts, kolStats } from "@/lib/kol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -75,12 +82,56 @@ export async function GET(req: NextRequest) {
     const { human, bots, earliestHuman } = rankPosts(posts, launch);
     const timing = timingContext(earliestHuman, launch);
 
+    // Coordinated-KOL detection over the human posters.
+    const coordinated = detectCoordinatedKOLs(human);
+
+    // If the query is a contract address, this token's human posters become
+    // "calls" in the persistent KOL ledger, and each poster's track record +
+    // any bio-stated wallet are surfaced. Enrich the token's live mcap first.
+    const isCa = /^[A-Za-z0-9]{32,44}$/.test(query);
+    let mcap = 0;
+    let symbol = "?";
+    if (isCa) {
+      try {
+        const dr = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${query}`, { cache: "no-store" });
+        if (dr.ok) {
+          const d = await dr.json();
+          const sol = (d?.pairs ?? []).filter((p: { chainId?: string }) => p.chainId === "solana");
+          const best = sol.sort((a: { volume?: { h24?: number } }, b: { volume?: { h24?: number } }) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))[0];
+          mcap = Number(best?.marketCap ?? best?.fdv ?? 0);
+          symbol = best?.baseToken?.symbol ?? "?";
+        }
+      } catch { /* mcap stays 0 → ingest is skipped */ }
+      await ingestKolPosts(
+        query,
+        symbol,
+        mcap,
+        human.map((p) => ({ handle: p.author, hadThesis: p.hasThesis }))
+      );
+    }
+
+    // Attach each surfaced poster's track record + resolved wallet (best-effort).
+    const enrichedHuman = await Promise.all(
+      human.slice(0, 12).map(async (p) => ({
+        author: p.author,
+        followers: p.followers,
+        text: p.text,
+        createdAt: p.createdAt,
+        url: p.url,
+        earlyScore: p.earlyScore,
+        hasThesis: p.hasThesis,
+        wallet: extractWallet(p.text),
+        track: isCa ? await kolStats(p.author) : null,
+      }))
+    );
+
     return NextResponse.json({
       configured: true,
       timing,
       humanCount: human.length,
       botCount: bots.length,
-      human: human.slice(0, 12),
+      coordinated,
+      human: enrichedHuman,
     });
   } catch {
     return NextResponse.json({ configured: true, error: "worker unreachable" }, { status: 502 });

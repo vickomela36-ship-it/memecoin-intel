@@ -75,6 +75,63 @@ export function rankPosts(posts: RawPost[], launchAt: number | null): {
   return { human, bots, earliestHuman };
 }
 
+/**
+ * Coordinated-KOL detection: multiple distinct accounts posting the same token
+ * inside a short window is the pattern where a group bundles a coin at launch,
+ * splits supply, then takes turns posting to fake independent organic hype.
+ * Operates on the posts already returned for one token — pure, no extra data.
+ */
+export function detectCoordinatedKOLs(
+  posts: RawPost[],
+  windowMin = 90
+): { coordinated: boolean; authors: string[]; withinMin: number | null; note: string } {
+  // Earliest post per distinct author, then look for a tight cluster of them.
+  const firstByAuthor = new Map<string, number>();
+  for (const p of posts) {
+    const prev = firstByAuthor.get(p.author);
+    if (prev === undefined || p.createdAt < prev) firstByAuthor.set(p.author, p.createdAt);
+  }
+  const times = Array.from(firstByAuthor.entries()).sort((a, b) => a[1] - b[1]);
+  if (times.length < 3) {
+    return { coordinated: false, authors: [], withinMin: null, note: "Too few distinct accounts to judge coordination." };
+  }
+  // Slide a window; find the largest set of distinct authors within windowMin.
+  const winMs = windowMin * 60_000;
+  let best: [string, number][] = [];
+  for (let i = 0; i < times.length; i++) {
+    const group = times.filter(([, t]) => t >= times[i][1] && t <= times[i][1] + winMs);
+    if (group.length > best.length) best = group;
+  }
+  const coordinated = best.length >= 3;
+  const span = best.length >= 2 ? (best[best.length - 1][1] - best[0][1]) / 60_000 : 0;
+  return {
+    coordinated,
+    authors: best.map(([a]) => a),
+    withinMin: coordinated ? Math.round(span) : null,
+    note: coordinated
+      ? `${best.length} separate accounts first posted this within ${Math.round(span)} minutes — possible coordinated push dressed as organic hype. Weight the "buzz" accordingly.`
+      : "No tight cluster of accounts posting together — chatter looks staggered.",
+  };
+}
+
+const SOL_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+
+/**
+ * Best-effort handle↔wallet resolver: pull a Solana address out of a post/bio
+ * (people paste their wallet, a .sol tip address, a disclosure). Returns null
+ * if none — never guesses. The caller can then cross-check on-chain whether the
+ * poster is selling what they're shilling.
+ */
+export function extractWallet(text: string): string | null {
+  const m = text.match(SOL_ADDR);
+  // Exclude obvious non-wallet 32-44 char strings by requiring base58-ish and
+  // not looking like a URL slug.
+  if (!m) return null;
+  const cand = m[0];
+  if (/^[0-9]+$/.test(cand)) return null;
+  return cand;
+}
+
 export function timingContext(
   earliestHuman: number | null,
   launchAt: number | null

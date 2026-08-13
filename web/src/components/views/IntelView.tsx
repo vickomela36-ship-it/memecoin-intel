@@ -8,14 +8,33 @@ import { addWatch } from "@/lib/storage";
 import { jsonFetcher } from "@/lib/utils";
 import type { SafetyReport } from "@/types";
 
+interface KolTrack {
+  handle: string;
+  callCount: number;
+  hitRate: number;
+  noReasoningRatio: number;
+  nearTopRatio: number;
+  grade: string;
+}
 interface SocialResp {
   configured: boolean;
   hint?: string;
   timing?: { label: string; detail: string };
   humanCount?: number;
   botCount?: number;
-  human?: { author: string; followers: number; text: string; createdAt: number; url?: string; earlyScore: number; hasThesis: boolean }[];
+  coordinated?: { coordinated: boolean; authors: string[]; withinMin: number | null; note: string };
+  human?: {
+    author: string; followers: number; text: string; createdAt: number; url?: string;
+    earlyScore: number; hasThesis: boolean; wallet?: string | null; track?: KolTrack | null;
+  }[];
 }
+
+const KOL_GRADE_COLOR: Record<string, string> = {
+  SHARP: "var(--signal-long)",
+  MIXED: "var(--signal-neutral)",
+  FADE: "var(--signal-short)",
+  NEW: "var(--text-tertiary)",
+};
 
 function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
   const [data, setData] = useState<SocialResp | null>(null);
@@ -81,9 +100,20 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
         {data.humanCount ?? 0} credible human posts · {data.botCount ?? 0} bots filtered out.
         Ranked by early + small-account + real thesis, not engagement.
       </div>
+
+      {/* Coordinated-KOL warning */}
+      {data.coordinated?.coordinated && (
+        <div
+          className="text-xs rounded-input px-3 py-2 font-mono-display"
+          style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--signal-short)", color: "var(--signal-short)" }}
+        >
+          ⚠ COORDINATED POSTING — {data.coordinated.note}
+        </div>
+      )}
+
       {(data.human ?? []).map((p, i) => (
         <div key={i} className="rounded-input px-3 py-1.5 text-xs" style={{ background: "var(--bg-elevated)" }}>
-          <div className="flex justify-between">
+          <div className="flex justify-between flex-wrap gap-1">
             <a href={p.url ?? `https://x.com/${p.author}`} target="_blank" rel="noopener noreferrer"
               className="font-mono-display text-[var(--signal-edge)] hover:underline">
               @{p.author}
@@ -92,6 +122,31 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
               {p.followers.toLocaleString()} followers · score {p.earlyScore}{p.hasThesis && " · thesis"}
             </span>
           </div>
+          {/* KOL track record + resolved wallet */}
+          {(p.track || p.wallet) && (
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              {p.track && (
+                <span
+                  className="font-mono-display px-1.5 py-0.5 rounded-input"
+                  style={{ color: KOL_GRADE_COLOR[p.track.grade], border: `1px solid ${KOL_GRADE_COLOR[p.track.grade]}` }}
+                  title={`${p.track.callCount} calls · ${Math.round(p.track.hitRate * 100)}% ≥2x · ${Math.round(p.track.noReasoningRatio * 100)}% no-reason · ${Math.round(p.track.nearTopRatio * 100)}% near-top`}
+                >
+                  {p.track.grade} · {Math.round(p.track.hitRate * 100)}% hit / {p.track.callCount}
+                </span>
+              )}
+              {p.wallet && (
+                <a
+                  href={`https://solscan.io/account/${p.wallet}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono-display text-[var(--text-tertiary)] hover:underline"
+                  title="Wallet stated in this post — cross-check whether they're selling what they shill"
+                >
+                  wallet {p.wallet.slice(0, 4)}…{p.wallet.slice(-4)} ↗
+                </a>
+              )}
+            </div>
+          )}
           <div className="text-[var(--text-secondary)] mt-0.5">{p.text.slice(0, 200)}</div>
         </div>
       ))}
