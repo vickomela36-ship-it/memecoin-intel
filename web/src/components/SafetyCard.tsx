@@ -111,13 +111,18 @@ export default function SafetyCard({
               <div className="px-3 pb-2">
                 <div className="text-xs text-[var(--text-secondary)] mb-1">{report.collision.vampReason}</div>
                 <table className="data-table">
-                  <thead><tr><th>Token</th><th>Age</th><th>MCap</th><th>Vol 24h</th><th></th></tr></thead>
+                  <thead><tr><th>Token</th><th>Leader</th><th>Age</th><th>MCap</th><th>Vol 24h</th><th></th></tr></thead>
                   <tbody>
                     {report.collision.competitors.map((c) => (
                       <tr key={c.address}>
                         <td className="font-mono-display">
                           ${c.symbol}{c.canonicalMatch && " ✓"}
-                          {c.isLeaderByVol && <span style={{ color: "var(--signal-edge)" }}> ◀ leader</span>}
+                          {c.isLeaderByVol && <span style={{ color: "var(--signal-edge)" }}> ◀ vol</span>}
+                        </td>
+                        <td className="font-mono-display" title={c.leaderNote}>
+                          <span style={{ color: c.leaderScore >= 70 ? "var(--signal-long)" : c.leaderScore >= 40 ? "var(--signal-neutral)" : "var(--text-tertiary)" }}>
+                            {c.leaderScore}
+                          </span>
                         </td>
                         <td>{c.ageHours < 24 ? `${c.ageHours.toFixed(0)}h` : `${(c.ageHours / 24).toFixed(0)}d`}</td>
                         <td>${(c.fdv / 1000).toFixed(0)}K</td>
@@ -134,7 +139,9 @@ export default function SafetyCard({
                     ))}
                   </tbody>
                 </table>
-                <div className="text-xs text-[var(--text-tertiary)] mt-1">✓ = ticker/name canonically matches the narrative.</div>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                  ✓ = canonical name match. Leader score = 40% identity (name matches the subject) + 35% distribution moat (share of the narrative&apos;s volume &amp; liquidity) + 25% product gravity (recurring mechanics beyond attention). Hover a score for the breakdown.
+                </div>
               </div>
             </details>
           )}

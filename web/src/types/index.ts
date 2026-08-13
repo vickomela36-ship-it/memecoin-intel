@@ -189,6 +189,11 @@ export interface NarrativeCompetitorLite {
   vol24: number;
   isLeaderByVol: boolean;
   canonicalMatch: boolean;
+  identity: number;
+  moat: number;
+  gravity: number;
+  leaderScore: number;
+  leaderNote: string;
 }
 
 export interface CollisionInfo {

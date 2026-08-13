@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import SafetyCard from "@/components/SafetyCard";
 import ChartCard from "@/components/ChartCard";
+import NarrativeMiner from "@/components/NarrativeMiner";
 import { addWatch } from "@/lib/storage";
 import { jsonFetcher } from "@/lib/utils";
 import type { SafetyReport } from "@/types";
@@ -238,6 +239,9 @@ export default function IntelView() {
           </div>
         </>
       )}
+
+      {/* Narrative miner — standalone, doesn't require a token to be loaded */}
+      <NarrativeMiner />
     </div>
   );
 }

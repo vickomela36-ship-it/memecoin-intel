@@ -587,6 +587,7 @@ export async function GET(req: NextRequest) {
         competitors: c.competitors.map((x) => ({
           symbol: x.symbol, address: x.address, ageHours: Number(x.ageHours.toFixed(1)),
           fdv: x.fdv, vol24: x.vol24, isLeaderByVol: x.isLeaderByVol, canonicalMatch: x.canonicalMatch,
+          identity: x.identity, moat: x.moat, gravity: x.gravity, leaderScore: x.leaderScore, leaderNote: x.leaderNote,
         })),
         vampRisk: c.vampRisk,
         vampReason: c.vampReason,
