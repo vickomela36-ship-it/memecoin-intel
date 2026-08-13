@@ -13,6 +13,8 @@ import {
   narrativeKeyword,
   type OHLCV,
 } from "@/modules/memecoin/detectors";
+import { analyzeChart } from "@/lib/ta";
+import type { ChartInfo } from "@/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -524,6 +526,45 @@ export async function GET(req: NextRequest) {
   // Botted-chart detection
   const botted = detectBottedChart(ohlcv);
   if (botted.length) sources.push("Birdeye OHLCV");
+
+  // ── Market-structure / fib / confluence / invalidation TA ─────────────
+  // Reuses the OHLCV we already fetched — no extra provider cost. Age-gated:
+  // very young coins get raw trend only (no meaningful levels to draw yet).
+  let chart: ChartInfo | null = null;
+  if (ohlcv.length >= 12) {
+    const ageHours = dex?.pairCreatedAt ? (Date.now() - dex.pairCreatedAt) / 3_600_000 : 0;
+    const ca = analyzeChart(ohlcv, ageHours, "body");
+    if (!sources.includes("Birdeye OHLCV")) sources.push("Birdeye OHLCV");
+    chart = {
+      usable: ca.usable,
+      suppressReason: ca.suppressReason,
+      anchorMode: ca.anchorMode,
+      price: ca.price,
+      structure: { state: ca.structure.state, detail: ca.structure.detail },
+      fib: ca.fib
+        ? {
+            drawn: ca.fib.drawn,
+            reason: ca.fib.reason,
+            low: ca.fib.low,
+            high: ca.fib.high,
+            levels: ca.fib.levels,
+            goldenPocket: ca.fib.goldenPocket,
+            inGoldenPocket: ca.fib.inGoldenPocket,
+          }
+        : null,
+      confluence: ca.confluence
+        ? { signals: ca.confluence.signals, count: ca.confluence.count, grade: ca.confluence.grade }
+        : null,
+      invalidation: ca.invalidation
+        ? {
+            level: ca.invalidation.level,
+            basis: ca.invalidation.basis,
+            confirmed: ca.invalidation.confirmed,
+            note: ca.invalidation.note,
+          }
+        : null,
+    };
+  }
   if (botted[0] && botted[0].confidence >= 0.55) {
     checks.push({
       id: "botted",
@@ -572,6 +613,7 @@ export async function GET(req: NextRequest) {
     coinType: ct,
     botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain })),
     collision,
+    chart,
     holders,
     holderCount: rug?.totalHolders ? num(rug.totalHolders) : null,
     creator: { address: creatorAddr, status: creatorStatus, note: creatorNote },

@@ -198,6 +198,51 @@ export interface CollisionInfo {
   vampReason: string;
 }
 
+// ── Chart / market-structure TA (serialized view of lib/ta.ts) ─────────────
+
+export interface ChartLevel {
+  ratio: number;
+  price: number;
+  golden: boolean;
+}
+
+export interface ChartConfluenceSignal {
+  kind: string;
+  price: number;
+  detail: string;
+}
+
+export interface ChartInfo {
+  usable: boolean;
+  suppressReason: string | null;
+  anchorMode: "body" | "wick";
+  price: number;
+  structure: {
+    state: "UPTREND" | "DOWNTREND" | "RANGING" | "REVERSAL FORMING";
+    detail: string;
+  };
+  fib: {
+    drawn: boolean;
+    reason: string;
+    low: number;
+    high: number;
+    levels: ChartLevel[];
+    goldenPocket: [number, number] | null;
+    inGoldenPocket: boolean;
+  } | null;
+  confluence: {
+    signals: ChartConfluenceSignal[];
+    count: number;
+    grade: string;
+  } | null;
+  invalidation: {
+    level: number | null;
+    basis: string;
+    confirmed: boolean;
+    note: string;
+  } | null;
+}
+
 export interface SafetyReport {
   mint: string;
   symbol: string;
@@ -208,6 +253,7 @@ export interface SafetyReport {
   coinType: CoinTypeInfo | null;
   botted: BottedFlag[];
   collision: CollisionInfo | null;
+  chart: ChartInfo | null;
   holders: HolderRow[];
   holderCount: number | null;
   creator: {

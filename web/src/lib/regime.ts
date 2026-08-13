@@ -1,46 +1,6 @@
-// Market-structure engine + regime dial. Pure functions.
-
-export type TrendState = "UPTREND" | "DOWNTREND" | "RANGING" | "REVERSAL FORMING";
-
-export interface StructureResult {
-  state: TrendState;
-  detail: string;
-}
-
-/** Swing highs/lows from close series → higher-highs/higher-lows etc. */
-export function marketStructure(closes: number[]): StructureResult {
-  if (closes.length < 8) return { state: "RANGING", detail: "not enough data" };
-
-  // Fractal swing points: local extrema over a 2-bar window
-  const highs: number[] = [];
-  const lows: number[] = [];
-  for (let i = 2; i < closes.length - 2; i++) {
-    const w = closes.slice(i - 2, i + 3);
-    if (closes[i] === Math.max(...w)) highs.push(closes[i]);
-    if (closes[i] === Math.min(...w)) lows.push(closes[i]);
-  }
-  const last2 = <T,>(a: T[]) => a.slice(-2);
-  const [h1, h2] = last2(highs);
-  const [l1, l2] = last2(lows);
-
-  const hh = h2 > h1;
-  const hl = l2 > l1;
-  const lh = h2 < h1;
-  const ll = l2 < l1;
-
-  // Break of structure: latest close breaks the last swing high/low
-  const lastClose = closes[closes.length - 1];
-  const brokeUp = highs.length > 0 && lastClose > Math.max(...highs.slice(-2, -1), h1 ?? -Infinity);
-
-  if (highs.length >= 2 && lows.length >= 2) {
-    if (hh && hl) return { state: "UPTREND", detail: "higher highs + higher lows" };
-    if (lh && ll) {
-      if (brokeUp) return { state: "REVERSAL FORMING", detail: "downtrend structure just broke to the upside" };
-      return { state: "DOWNTREND", detail: "lower highs + lower lows" };
-    }
-  }
-  return { state: "RANGING", detail: "no clean higher-high/lower-low sequence" };
-}
+// Regime dial. Pure functions.
+// (Market-structure / swing engine lives in lib/ta.ts and is consumed by the
+//  per-token chart card; this file is only the market-wide regime composite.)
 
 // ── Regime composite ──────────────────────────────────────────────────────
 

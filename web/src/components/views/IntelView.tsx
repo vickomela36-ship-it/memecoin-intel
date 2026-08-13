@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import SafetyCard from "@/components/SafetyCard";
+import ChartCard from "@/components/ChartCard";
 import { addWatch } from "@/lib/storage";
 import { jsonFetcher } from "@/lib/utils";
 import type { SafetyReport } from "@/types";
@@ -199,6 +200,7 @@ export default function IntelView() {
             deepLoading={deepLoading}
             onDeepScan={report.deep?.ran ? undefined : () => run(true)}
           />
+          {report.chart && <ChartCard chart={report.chart} />}
           <SocialSection mint={report.mint} symbol={report.symbol} />
           <div className="flex gap-3">
             <button
