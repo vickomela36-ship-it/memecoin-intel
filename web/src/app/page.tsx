@@ -126,6 +126,17 @@ export default function Home() {
       <WatchSafetyPopup />
 
       <TrackRecord refreshKey={trackKey} />
+
+      {/* Persistent, non-dismissible risk disclaimer — every tab, always visible */}
+      <footer
+        className="border-t border-[var(--border-subtle)] px-4 py-2 text-[11px] leading-snug text-[var(--text-tertiary)]"
+        style={{ background: "var(--bg-surface)" }}
+      >
+        Not financial advice. Memecoin Intel surfaces information and does not
+        predict outcomes. Memecoin trading carries substantial risk of{" "}
+        <b className="text-[var(--text-secondary)]">total loss</b> — never risk
+        more than you can afford to lose.
+      </footer>
     </main>
   );
 }

@@ -2,6 +2,7 @@
 
 import { fmtPrice } from "@/lib/utils";
 import type { ChartInfo } from "@/types";
+import Term from "./Term";
 
 const TREND_COLOR: Record<string, string> = {
   UPTREND: "var(--signal-long)",
@@ -29,7 +30,9 @@ export default function ChartCard({ chart }: { chart: ChartInfo }) {
   return (
     <div className="card space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h3 className="font-display text-base font-semibold">MARKET STRUCTURE</h3>
+        <h3 className="font-display text-base font-semibold">
+          <Term k="market structure">MARKET STRUCTURE</Term>
+        </h3>
         <span
           className="font-mono-display text-xs px-2 py-0.5 rounded-input"
           style={{ color: clr, border: `1px solid ${clr}`, background: `${clr}15` }}
@@ -52,7 +55,7 @@ export default function ChartCard({ chart }: { chart: ChartInfo }) {
           <div>
             <div className="flex items-center justify-between">
               <span className="font-mono-display text-sm text-[var(--text-secondary)]">
-                FIB RETRACEMENT{" "}
+                <Term k="fib">FIB RETRACEMENT</Term>{" "}
                 <span className="text-[var(--text-tertiary)]">
                   ({fmtPrice(chart.fib.low)} → {fmtPrice(chart.fib.high)})
                 </span>
