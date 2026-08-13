@@ -1,8 +1,16 @@
 "use client";
 
+import useSWR from "swr";
 import { computeRegime } from "@/lib/regime";
 import { getChallenge } from "@/lib/storage";
 import { getPositions } from "@/lib/discipline";
+import { jsonFetcher } from "@/lib/utils";
+
+interface MajorsResp {
+  available: boolean;
+  majors: { sym: string; state: string; up: boolean }[];
+  majorsUp: number | null;
+}
 
 const STATE_COLOR = {
   HOT: "var(--signal-long)",
@@ -29,9 +37,15 @@ export default function RegimeBanner({
   medianH24: number;
 }) {
   const hit = recentHitRate();
-  // Majors read is derived from Solana memecoin breadth itself — no external
-  // call. Strong breadth ⇒ risk-on ecosystem; weak ⇒ risk-off.
-  const majorsUp = breadthPct >= 55 ? 3 : breadthPct >= 45 ? 2 : breadthPct >= 35 ? 1 : 0;
+  // Real BTC/ETH/SOL structure when Binance answers; otherwise fall back to a
+  // breadth-derived proxy so the dial never hard-depends on an external feed.
+  const { data: majorsData } = useSWR<MajorsResp>("/api/majors", (u: string) => jsonFetcher<MajorsResp>(u), {
+    refreshInterval: 600_000,
+    revalidateOnFocus: false,
+  });
+  const proxyUp = breadthPct >= 55 ? 3 : breadthPct >= 45 ? 2 : breadthPct >= 35 ? 1 : 0;
+  const realMajors = majorsData?.available && majorsData.majorsUp !== null;
+  const majorsUp = realMajors ? majorsData!.majorsUp! : proxyUp;
   const regime = computeRegime({ breadthPct, medianH24, majorsUp });
   const clr = STATE_COLOR[regime.state];
   const coldWeek = regime.state === "COLD" && hit.rate !== null && hit.rate < 0.4;
@@ -52,9 +66,19 @@ export default function RegimeBanner({
         </div>
         <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
           breadth {regime.inputs.breadthPct}% · median {regime.inputs.medianH24 >= 0 ? "+" : ""}
-          {regime.inputs.medianH24}% · trenches {regime.inputs.majorsUp}/3
+          {regime.inputs.medianH24}% ·{" "}
+          {realMajors ? "majors" : "trenches"} {regime.inputs.majorsUp}/3
         </span>
       </div>
+      {realMajors && (
+        <div className="flex gap-3 mt-1 text-xs font-mono-display">
+          {majorsData!.majors.map((m) => (
+            <span key={m.sym} style={{ color: m.up ? "var(--signal-long)" : m.state === "DOWNTREND" ? "var(--signal-short)" : "var(--text-tertiary)" }}>
+              {m.sym} {m.state === "UPTREND" ? "▲" : m.state === "DOWNTREND" ? "▼" : m.state === "REVERSAL FORMING" ? "↺" : "→"}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="text-sm text-[var(--text-secondary)] mt-1">{regime.guidance}</div>
       <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{regime.rotation}</div>
       {coldWeek && (
