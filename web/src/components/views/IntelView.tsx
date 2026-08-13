@@ -19,6 +19,7 @@ interface KolTrack {
 interface SocialResp {
   configured: boolean;
   hint?: string;
+  source?: string;
   timing?: { label: string; detail: string };
   humanCount?: number;
   botCount?: number;
@@ -43,10 +44,12 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
   async function load() {
     setLoading(true);
     try {
-      const r = await jsonFetcher<SocialResp>(`/api/social?q=${encodeURIComponent(mint)}`);
+      const r = await jsonFetcher<SocialResp>(
+        `/api/social?q=${encodeURIComponent(mint)}&symbol=${encodeURIComponent(symbol)}`
+      );
       setData(r);
     } catch {
-      setData({ configured: true, hint: "Social worker unreachable." });
+      setData({ configured: true, hint: "Social source unreachable." });
     } finally {
       setLoading(false);
     }
@@ -70,11 +73,11 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
     return (
       <div className="card text-xs text-[var(--text-tertiary)]">
         <b className="text-[var(--text-secondary)]">Social analysis not connected.</b>{" "}
-        X data can&apos;t run on Vercel (X blocks scrapers; Agent-Reach needs login
-        cookies + a long-running host). Self-host an Agent-Reach worker and set
-        the <code>XREACH_URL</code> env var — then this section filters bots and
-        surfaces early, credible posters. The analysis logic is already built and
-        waiting for a data source; nothing here is faked.
+        Set a <code>LUNARCRUSH_API_KEY</code> (recommended — runs on Vercel, no
+        worker to host) or a self-hosted <code>XREACH_URL</code> worker. Then this
+        section filters bots and surfaces early, credible posters + KOL track
+        records. The analysis logic is already built and waiting for a data
+        source; nothing here is faked. See <code>SETUP.md</code>.
       </div>
     );
   }
@@ -82,7 +85,12 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
   return (
     <div className="card space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="font-mono-display text-base">SOCIAL SIGNAL</h3>
+        <h3 className="font-mono-display text-base">
+          SOCIAL SIGNAL
+          {data.source && (
+            <span className="text-xs text-[var(--text-tertiary)] ml-2">via {data.source}</span>
+          )}
+        </h3>
         {data.timing && (
           <span
             className="font-mono-display text-xs px-2 py-0.5 rounded-input"
