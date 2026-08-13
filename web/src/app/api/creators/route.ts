@@ -7,8 +7,8 @@ export const maxDuration = 60;
 // their tokens perform. Built up over time from tokens the scanner surfaces.
 // Stored in KV so it accumulates across all sessions and devices.
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function kv(cmd: (string | number)[]): Promise<unknown> {
   if (!KV_URL || !KV_TOKEN) return null;

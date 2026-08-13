@@ -7,7 +7,10 @@ export const dynamic = "force-dynamic";
 // in-app status panel so you can see what's live vs dormant.
 
 export async function GET() {
-  const kv = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+  const kv = !!(
+    (process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL) &&
+    (process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN)
+  );
   const lunar = !!process.env.LUNARCRUSH_API_KEY;
   const xreach = !!process.env.XREACH_URL;
   const helius = !!process.env.HELIUS_API_KEY;

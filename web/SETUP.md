@@ -16,26 +16,30 @@ Powers: the **call ledger** (first-caller attribution), **KOL track-record**,
 **creator balance + cluster tracking**, the **trenches heat gauge**, and
 **cross-device sync**.
 
+Vercel no longer has a built-in "KV" — it's now provided through the
+**Upstash** marketplace entry (serverless Redis with a REST API, which is what
+this app talks to).
+
 Steps:
 
-1. In the Vercel dashboard, open your project → **Storage** tab.
-2. Click **Create Database → KV** (this is Upstash Redis under the hood).
-   Accept the free "Hobby" tier to start.
-3. Give it a name (e.g. `memecoin-intel-kv`) and pick the region closest to
-   your function region.
-4. On the database page, click **Connect Project** and select this project +
-   the environments (Production/Preview/Development) you want.
-5. Vercel auto-injects the credentials as env vars. Confirm these two exist on
-   the project (the app reads exactly these names):
+1. In the Vercel dashboard, open your project → **Storage → Create Database**.
+2. Under **Marketplace Database Providers**, pick **Upstash**
+   (*Serverless DB — Redis, Vector, Queue, Search*).
+   - **Do NOT** pick "Redis — Official Redis for Vercel"; that's a raw
+     `redis://` connection, not the REST API this app uses.
+3. Choose **Redis**, the free tier, and a region near your function region.
+4. **Connect** it to this project and select the environments
+   (Production/Preview/Development) you want.
+5. Vercel/Upstash auto-injects the REST credentials. The app accepts **either**
+   naming, so whichever pair it creates will work:
 
    ```
-   KV_REST_API_URL
-   KV_REST_API_TOKEN
+   KV_REST_API_URL          / KV_REST_API_TOKEN
+     — or —
+   UPSTASH_REDIS_REST_URL   / UPSTASH_REDIS_REST_TOKEN
    ```
 
-   > If you created the store outside Vercel (directly on Upstash), copy the
-   > **REST URL** and **REST token** from the Upstash console into those two
-   > variable names manually.
+   You don't need to rename anything.
 6. **Redeploy.** Open **? → STATUS**; "Persistence (Vercel KV)" should read
    **● LIVE**.
 

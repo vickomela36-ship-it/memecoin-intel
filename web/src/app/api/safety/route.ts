@@ -24,8 +24,8 @@ const HELIUS_KEY =
 const BIRDEYE_KEY =
   process.env.BIRDEYE_API_KEY ?? "dac9521a4c004f65897b2bd3e52cf10d";
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 
 function num(v: unknown): number {
   const n = Number(v);

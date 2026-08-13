@@ -9,8 +9,8 @@ export const maxDuration = 30;
 // { ca, caller, source } (optionally a shared secret) and every call is
 // auto-enriched with its market cap at call time. First-caller wins attribution.
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 const INGEST_SECRET = process.env.CALLS_INGEST_SECRET; // optional webhook guard
 
 async function kv(cmd: (string | number)[]): Promise<unknown> {

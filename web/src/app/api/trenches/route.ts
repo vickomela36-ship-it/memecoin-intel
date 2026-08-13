@@ -10,8 +10,8 @@ export const maxDuration = 30;
 // measured from accumulated history, not fabricated. Empty until the ledger
 // has data.
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function kv(cmd: (string | number)[]): Promise<unknown> {
   if (!KV_URL || !KV_TOKEN) return null;
