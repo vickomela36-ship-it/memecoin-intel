@@ -78,8 +78,21 @@ export default function PortfolioView() {
       {/* ── Watchlist ─────────────────────────────────────────────── */}
       <div className="card">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-          <h3 className="font-mono-display text-base">
+          <h3 className="font-mono-display text-base flex items-center gap-2">
             WATCHLIST ({watchlist.length})
+            {(() => {
+              const hit = watchlist.filter((w) => (w.peakMultiple ?? 0) >= 2).length;
+              const near = watchlist.filter((w) => {
+                const cur = live.get(w.address)?.price ?? null;
+                return cur !== null && w.target2x > 0 && cur / w.target2x >= 0.8 && (w.peakMultiple ?? 0) < 2;
+              }).length;
+              if (!hit && !near) return null;
+              return (
+                <span className="font-mono-display text-xs px-2 py-0.5 rounded-input" style={{ color: "var(--signal-long)", border: "1px solid var(--signal-long)" }}>
+                  {hit > 0 && `🎯 ${hit} hit 2x`}{hit > 0 && near > 0 && " · "}{near > 0 && `${near} near`}
+                </span>
+              );
+            })()}
           </h3>
           <div className="flex items-center gap-3">
             {refreshedAt && (

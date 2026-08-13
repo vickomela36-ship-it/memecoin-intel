@@ -8,6 +8,7 @@ import { typeAccuracy } from "@/lib/accuracy-tracker";
 import type { MemeSignal } from "@/types";
 import ScoreBar from "./ScoreBar";
 import Sentiment from "./Sentiment";
+import TickValue from "./TickValue";
 
 // Mirror of MemeView's LOG_TYPE so a card can look up its own hit-rate.
 const LOG_TYPE: Record<MemeSignal["mode"], string> = {
@@ -136,7 +137,16 @@ export default function SignalCard({
           label="Buys/Sells"
           value={signal.buySellRatio > 0 ? `${signal.buySellRatio.toFixed(1)}x` : "—"}
         />
-        <Stat label="Price" value={fmtPrice(signal.priceUsd)} />
+        <div className="flex justify-between sm:block">
+          <span className="text-xs text-[var(--text-tertiary)] font-mono-display uppercase tracking-wide block">
+            Price
+          </span>
+          <TickValue
+            value={signal.priceUsd}
+            format={fmtPrice}
+            className="font-mono-display text-sm"
+          />
+        </div>
         <Stat
           label="Age"
           value={

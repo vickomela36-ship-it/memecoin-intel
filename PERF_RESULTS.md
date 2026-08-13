@@ -66,9 +66,81 @@ Safety/Creators/Confluence code. Combined with the Slice-0 strip (which
 removed the football/perp/LP/Recharts weight entirely), first-paint JS is a
 fraction of the pre-v2 bundle.
 
-## Slice 4 — unified sentiment engine (pending)
-## Slice 5 — signal efficiency / per-type hit-rate (pending)
-## Slice 6 — UI pass (design plan first) (pending)
-## Slice 4 — unified sentiment engine (pending)
-## Slice 5 — signal efficiency / per-type hit-rate (pending)
-## Slice 6 — UI pass (design plan first) (pending)
+## Slice 4 — unified sentiment engine
+
+**What changed:** one explainable `SentimentSignal` contract
+(`src/lib/sentiment.ts`) built from on-chain flow only — buy/sell pressure
+(40%), volume acceleration (35%), transaction intensity (25%). Price is
+deliberately excluded so price-vs-sentiment **divergence** is a first-class
+output. Velocity/acceleration are real, tracked in a per-token localStorage
+ring buffer. A single `<Sentiment>` component renders on every card with a
+click-to-expand component table — nothing is a black box. Confidence scales
+with sample size (3 txns ≠ 3,000).
+
+## Slice 5 — per-signal-type hit-rate
+
+**What changed:** `typeAccuracy(module, type)` reports "this flag has been
+right X% over N logged instances," null until ≥5 resolved so no meaningless
+numbers show. Directional sentiment (conf ≥ 0.65, |score| ≥ 40) is logged and
+resolved directionally (bull ⇒ price up in 24h). Below-chance types are
+flagged "weight lightly." All accuracy is from real logged signals — nothing
+is simulated.
+
+## Slice 6 — Trench Terminal UI
+
+**What changed:** Solana-native palette (green `#14f195` / hot red `#ff4d6d`
+/ purple `#9945ff` reserved for edge+divergence / amber) on blue-black
+`#0a0e14`. Type system: Space Grotesk display face on headers, Inter body,
+JetBrains Mono with `tabular-nums` on every numeric so columns never shift as
+values tick. Signature elements: the **signal-fire** live-heat dot and the
+**divergence bar** (sentiment fills from the left, price from the right;
+glows purple when they pull apart). Live numbers flash green/red on change
+via `<TickValue>`. Full state coverage: shaped skeletons on cold start,
+`is-stale` dim veil during in-flight refetch, explicit empty and error
+states. Every looping/entrance/flash animation is killed under
+`prefers-reduced-motion`.
+
+| Metric | Before (Slice 3) | After UI | Δ |
+|---|---|---|---|
+| Main route (`/`) JS | 15.7 kB | 17.9 kB | +2.2 kB (fonts + fire/divergence/tick) |
+| First Load JS | 108 kB | 110 kB | +2 kB |
+
+The +2 kB buys the display font, the two signature components, and full
+loading/stale/empty/error states — a deliberate, measured trade for the
+terminal feel, well under the pre-v2 baseline (124 kB).
+
+## Live runtime metrics — OPEN (blocked in build env)
+
+All numbers above are **build-time bundle deltas** — real, reproducible from
+`npm run build`. The field timings the baseline calls for (Lighthouse
+Performance/LCP/TBT/CLS, network waterfall) require reaching the deployed URL,
+and the sandboxed build environment's egress policy denies `vercel.app`
+(proxy returns a policy `connect_rejected`). They are therefore **not yet
+captured** — deliberately left blank rather than fabricated.
+
+**To fill this in**, either let CI do it or run it yourself.
+
+*CI (automatic):* `.github/workflows/perf-capture.yml` runs on every successful
+Vercel deploy (`deployment_status`) and writes the table to the run's **job
+summary** + a downloadable **artifact** — no clicks, no fabrication, no
+commit-loop. To also record it into the tree, trigger the workflow manually
+from the Actions tab with `commit: true`; it appends to `web/perf-history.md`
+with `[skip ci]`.
+
+*Local (manual):* run from any machine with normal network:
+
+```bash
+cd web && ./scripts/capture-perf.sh            # prod URL
+# or: ./scripts/capture-perf.sh https://<preview>.vercel.app/
+```
+
+It prints (and writes `web/perf-capture.md`) a paste-ready table:
+
+| Profile | Perf | FCP | LCP | TBT | CLS | TTI | Transfer |
+|---|---|---|---|---|---|---|---|
+| Mobile  | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Desktop | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+
+These are the before/after field numbers that make Pillar A's efficiency
+claims complete; the script also dumps `x-vercel-cache`/region headers so the
+edge-cache behavior of `/api/prices` and `/api/scan` is verifiable.

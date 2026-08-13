@@ -49,7 +49,7 @@ export default function MemeView({
   onLogged: () => void;
 }) {
   // Server route runs ONE shared scan per minute for all visitors
-  const { data, error, isLoading } = useSWR(
+  const { data, error, isLoading, isValidating } = useSWR(
     "/api/scan",
     (url: string) => jsonFetcher<MemeScanResult>(url),
     {
@@ -164,8 +164,28 @@ export default function MemeView({
         ? "var(--signal-short)"
         : "var(--signal-neutral)";
 
+  // Cold start — no data yet. Show a shaped skeleton, not a spinner, so the
+  // terminal feels like it's assembling rather than blank-then-pop.
+  if (isLoading && !data) {
+    return (
+      <div className="space-y-3" aria-busy="true" aria-label="scanning market">
+        <div className="skeleton h-20 w-full" />
+        <div className="skeleton h-12 w-full" />
+        <div className="skeleton h-40 w-full" />
+        <div className="skeleton h-40 w-full" />
+        <p className="text-xs text-[var(--text-tertiary)] font-mono-display text-center pt-1">
+          Running the shared market scan…
+        </p>
+      </div>
+    );
+  }
+
+  // A refetch is in flight while we already have data on screen — dim the
+  // stale numbers slightly so it's honest that they're one beat behind.
+  const stale = isValidating && !!data;
+
   return (
-    <div className="space-y-3">
+    <div className={`space-y-3${stale ? " is-stale" : ""}`}>
       {/* ── Market pulse + scan stats (the Streamlit stats row) ────────── */}
       {pulse && (
         <div className="card">
@@ -178,8 +198,8 @@ export default function MemeView({
             <span className="text-xs text-[var(--text-tertiary)] font-mono-display">
               {error
                 ? `⚠ scan API unreachable — last data ${timeAgo(fetchedAt)}`
-                : isLoading && !data
-                  ? "scanning…"
+                : isValidating
+                  ? "refreshing…"
                   : `updated ${timeAgo(fetchedAt)}`}
             </span>
           </div>
@@ -209,7 +229,7 @@ export default function MemeView({
       {metas.length > 0 && (
         <div className="card">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-            <h2 className="font-mono-display text-lg">META OF THE DAY</h2>
+            <h2 className="font-display text-lg font-semibold">META OF THE DAY</h2>
             <span
               className="font-mono-display text-sm pulse-live"
               style={{ color: "var(--signal-edge)" }}
@@ -418,7 +438,7 @@ function Section({
   return (
     <>
       <div className="mt-2">
-        <h2 className="font-mono-display text-lg">{title}</h2>
+        <h2 className="font-display text-lg font-semibold">{title}</h2>
         <p className="text-xs text-[var(--text-tertiary)]">{caption}</p>
       </div>
       {signals.map((s) => (

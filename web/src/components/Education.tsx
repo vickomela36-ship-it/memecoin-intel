@@ -1,23 +1,48 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { GLOSSARY } from "@/lib/glossary";
 
-const GLOSSARY: { term: string; def: string }[] = [
-  { term: "Slippage", def: "The gap between the price you expect and the price you actually get. On thin liquidity, a market buy can fill far worse than the screen shows." },
-  { term: "LP (Liquidity Pool)", def: "The paired token+SOL reserve that lets people trade. If it's unlocked, the dev can withdraw it and the price goes to zero — a rug." },
-  { term: "TVL", def: "Total Value Locked — the dollar amount sitting in a protocol/pool. For a memecoin, roughly the liquidity depth." },
-  { term: "Bundling", def: "A dev splitting supply across many wallets at launch to hide concentration, then selling in coordination. Looks organic, isn't." },
-  { term: "Honeypot", def: "A token you can buy but can't sell — usually via freeze authority. The chart looks up-only because nobody can exit." },
-  { term: "CTO", def: "Community Takeover — the original dev abandoned the token and holders took over marketing/development." },
-  { term: "Vamping", def: "A correctly-named or better-executed token stealing a narrative from the coin that ran first. The first mover dies when the 'real' one appears." },
-  { term: "Market structure", def: "The sequence of swing highs and lows. Higher highs + higher lows = uptrend; lower highs + lower lows = downtrend." },
-  { term: "Break of structure (BOS)", def: "Price breaking the most recent swing high (bullish) or low (bearish), signaling the trend may be shifting." },
-  { term: "Fib retracement", def: "Fibonacci levels (0.5, 0.618, 0.786) drawn from a swing low to high, marking zones where a pullback often finds support." },
-  { term: "Bonding curve", def: "The pricing mechanism on launchpads like pump.fun — price rises as more is bought, until the token 'graduates' to a real DEX pool." },
-  { term: "Graduation", def: "When a launchpad token fills its bonding curve and migrates to a full DEX (e.g. Raydium) with a standard liquidity pool." },
-  { term: "Fresh wallet", def: "A wallet created recently with no prior history. Several in the top holders of a new launch = a coordinated, likely-insider launch." },
-  { term: "Market maker", def: "An entity (often a bot) providing continuous buy/sell orders. On memecoins it can manufacture a fake, too-regular chart." },
-];
+interface FeatureStatus { key: string; label: string; live: boolean; powers: string; detail?: string }
+
+/** Shows which env-backed features are live vs dormant on this deployment. */
+function StatusTab() {
+  const [features, setFeatures] = useState<FeatureStatus[] | null>(null);
+  useEffect(() => {
+    fetch("/api/status")
+      .then((r) => r.json())
+      .then((d) => setFeatures(d.features ?? []))
+      .catch(() => setFeatures([]));
+  }, []);
+
+  if (!features) return <div className="text-sm text-[var(--text-tertiary)]">Checking…</div>;
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm text-[var(--text-secondary)]">
+        What&apos;s connected on this deployment. Dormant features work the moment
+        their key is set — see <code>SETUP.md</code> in the repo.
+      </div>
+      {features.map((f) => (
+        <div key={f.key} className="rounded-input px-3 py-2" style={{ background: "var(--bg-elevated)" }}>
+          <div className="flex items-center justify-between">
+            <span className="font-mono-display text-sm">{f.label}</span>
+            <span
+              className="font-mono-display text-xs px-2 py-0.5 rounded-input"
+              style={{
+                color: f.live ? "var(--signal-long)" : "var(--signal-neutral)",
+                border: `1px solid ${f.live ? "var(--signal-long)" : "var(--signal-neutral)"}`,
+              }}
+            >
+              {f.live ? `● LIVE${f.detail && f.detail !== "none" ? ` · ${f.detail}` : ""}` : "○ DORMANT"}
+            </span>
+          </div>
+          <div className="text-xs text-[var(--text-tertiary)] mt-0.5">{f.powers}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const SECURITY: string[] = [
   "Use a SEPARATE trading wallet from the wallet you connect to random sites.",
@@ -62,7 +87,7 @@ function checkUrl(raw: string): { level: "ok" | "warn" | "danger"; msg: string }
 }
 
 export default function Education({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<"glossary" | "security" | "phishing">("glossary");
+  const [tab, setTab] = useState<"glossary" | "security" | "phishing" | "status">("glossary");
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<ReturnType<typeof checkUrl> | null>(null);
 
@@ -71,7 +96,7 @@ export default function Education({ onClose }: { onClose: () => void }) {
       <div className="card max-w-2xl w-full my-8 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex gap-2">
-            {(["glossary", "security", "phishing"] as const).map((t) => (
+            {(["glossary", "security", "phishing", "status"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -81,7 +106,7 @@ export default function Education({ onClose }: { onClose: () => void }) {
                   borderBottom: tab === t ? "2px solid var(--signal-edge)" : "2px solid transparent",
                 }}
               >
-                {t === "glossary" ? "GLOSSARY" : t === "security" ? "SECURITY" : "URL CHECK"}
+                {t === "glossary" ? "GLOSSARY" : t === "security" ? "SECURITY" : t === "phishing" ? "URL CHECK" : "STATUS"}
               </button>
             ))}
           </div>
@@ -149,6 +174,8 @@ export default function Education({ onClose }: { onClose: () => void }) {
             )}
           </div>
         )}
+
+        {tab === "status" && <StatusTab />}
 
         <div className="text-xs text-[var(--text-tertiary)] border-t border-[var(--border-subtle)] pt-2">
           Informed traders are more profitable traders — but nothing here is

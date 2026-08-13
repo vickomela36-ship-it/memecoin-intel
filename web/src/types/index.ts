@@ -7,6 +7,7 @@ export type TabId =
   | "confluence"
   | "intel"
   | "creators"
+  | "calls"
   | "positions"
   | "challenge"
   | "portfolio";
@@ -179,6 +180,7 @@ export interface BottedFlag {
   pattern: string;
   confidence: number;
   explain: string;
+  range: [number, number] | null; // offending candle index range, if localized
 }
 
 export interface NarrativeCompetitorLite {
@@ -189,6 +191,11 @@ export interface NarrativeCompetitorLite {
   vol24: number;
   isLeaderByVol: boolean;
   canonicalMatch: boolean;
+  identity: number;
+  moat: number;
+  gravity: number;
+  leaderScore: number;
+  leaderNote: string;
 }
 
 export interface CollisionInfo {
@@ -196,6 +203,51 @@ export interface CollisionInfo {
   competitors: NarrativeCompetitorLite[];
   vampRisk: boolean;
   vampReason: string;
+}
+
+// ── Chart / market-structure TA (serialized view of lib/ta.ts) ─────────────
+
+export interface ChartLevel {
+  ratio: number;
+  price: number;
+  golden: boolean;
+}
+
+export interface ChartConfluenceSignal {
+  kind: string;
+  price: number;
+  detail: string;
+}
+
+export interface ChartInfo {
+  usable: boolean;
+  suppressReason: string | null;
+  anchorMode: "body" | "wick";
+  price: number;
+  structure: {
+    state: "UPTREND" | "DOWNTREND" | "RANGING" | "REVERSAL FORMING";
+    detail: string;
+  };
+  fib: {
+    drawn: boolean;
+    reason: string;
+    low: number;
+    high: number;
+    levels: ChartLevel[];
+    goldenPocket: [number, number] | null;
+    inGoldenPocket: boolean;
+  } | null;
+  confluence: {
+    signals: ChartConfluenceSignal[];
+    count: number;
+    grade: string;
+  } | null;
+  invalidation: {
+    level: number | null;
+    basis: string;
+    confirmed: boolean;
+    note: string;
+  } | null;
 }
 
 export interface SafetyReport {
@@ -208,12 +260,14 @@ export interface SafetyReport {
   coinType: CoinTypeInfo | null;
   botted: BottedFlag[];
   collision: CollisionInfo | null;
+  chart: ChartInfo | null;
   holders: HolderRow[];
   holderCount: number | null;
   creator: {
     address: string | null;
     status: "accumulating" | "holding" | "distributing" | "unknown";
     note: string;
+    balancePct: number | null; // creator's current holding as % of supply, if measured
   };
   deep: {
     ran: boolean;
@@ -221,6 +275,7 @@ export interface SafetyReport {
     topSampled: number;
     fundingClusters: FundingCluster[];
     note: string;
+    clusterTrend: string | null; // measured change in cluster supply since last scan
   } | null;
   sources: string[]; // which providers answered
 }

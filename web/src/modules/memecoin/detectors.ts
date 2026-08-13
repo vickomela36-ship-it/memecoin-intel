@@ -122,15 +122,26 @@ export function detectBottedChart(candles: OHLCV): BottedPattern[] {
     });
   }
 
-  // 2. Instant candle + bot buys — one giant early candle then mechanical follow
+  // 2. Instant candle + bot buys — one giant early candle THEN mechanical
+  //    follow-through. We now actually MEASURE the follow-through (regularity
+  //    of the next candles) rather than asserting it: a big dev buy alone is
+  //    weaker signal than a big buy followed by bot-regular buying.
   const avgBody = mean(bodies) || 1;
   const earlyBig = candles.slice(0, 3).findIndex((c) => Math.abs(c.c - c.o) > avgBody * 6);
   if (earlyBig >= 0) {
+    const follow = candles.slice(earlyBig + 1, earlyBig + 8);
+    const fb = follow.map((c) => Math.abs(c.c - c.o));
+    const followCv = follow.length >= 4 && mean(fb) > 0 ? stddev(fb) / mean(fb) : 1;
+    // Green, low-variance follow-through = mechanical buying by a bot.
+    const upFollow = follow.filter((c) => c.c >= c.o).length;
+    const mechanical = follow.length >= 4 && followCv < 0.5 && upFollow / follow.length >= 0.7;
     out.push({
       pattern: "Instant candle",
-      confidence: 0.7,
-      explain: "A single enormous candle at/near launch — usually a large dev buy — followed by mechanical buying. The chart was kick-started by one entity.",
-      range: [earlyBig, Math.min(earlyBig + 1, candles.length - 1)],
+      confidence: mechanical ? 0.85 : 0.55,
+      explain: mechanical
+        ? "A single enormous candle at/near launch (a large dev buy) FOLLOWED by low-variance, mostly-green candles — measured mechanical buying. The chart was kick-started and is being walked up by one entity."
+        : "A single enormous candle at/near launch — usually a large dev buy. The follow-through looks organic rather than botted, so treat this as concentration risk, not a confirmed bot chart.",
+      range: [earlyBig, Math.min(earlyBig + follow.length, candles.length - 1)],
     });
   }
 
@@ -145,19 +156,28 @@ export function detectBottedChart(candles: OHLCV): BottedPattern[] {
     });
   }
 
-  // 4. Staircase — repeated similar up-steps with flat consolidation between
-  let steps = 0;
+  // 4. Staircase — repeated up-steps with flat consolidation between. We now
+  //    also verify the steps are EVENLY SPACED (low variance in the gap between
+  //    consecutive steps): regular spacing is a bot on a schedule; irregular
+  //    spacing is just a trending chart and shouldn't fire as strongly.
+  const stepIdx: number[] = [];
   for (let i = 2; i < candles.length; i++) {
     const up = candles[i].c > candles[i - 1].c * 1.05;
     const flatBefore = Math.abs(candles[i - 1].c - candles[i - 2].c) < candles[i - 2].c * 0.01;
-    if (up && flatBefore) steps++;
+    if (up && flatBefore) stepIdx.push(i);
   }
-  if (steps >= 4) {
+  if (stepIdx.length >= 4) {
+    const gaps: number[] = [];
+    for (let i = 1; i < stepIdx.length; i++) gaps.push(stepIdx[i] - stepIdx[i - 1]);
+    const gapCv = mean(gaps) > 0 ? stddev(gaps) / mean(gaps) : 1;
+    const regular = gapCv < 0.4; // evenly spaced
     out.push({
       pattern: "Staircase",
-      confidence: Math.min(0.9, 0.4 + steps * 0.08),
-      explain: `${steps} identical step-ups with flat consolidation between them at regular intervals — a bot walking the price up on a schedule.`,
-      range: null,
+      confidence: regular ? Math.min(0.9, 0.45 + stepIdx.length * 0.08) : Math.min(0.6, 0.3 + stepIdx.length * 0.05),
+      explain: regular
+        ? `${stepIdx.length} step-ups with flat consolidation between them at EVENLY SPACED intervals (gap variance ${(gapCv * 100).toFixed(0)}%) — a bot walking the price up on a schedule.`
+        : `${stepIdx.length} step-ups with flat pauses, but the spacing is irregular — could be an ordinary trending chart rather than a scheduled bot. Weight lightly.`,
+      range: [stepIdx[0], stepIdx[stepIdx.length - 1]],
     });
   }
 
@@ -182,6 +202,12 @@ export interface NarrativeCompetitor {
   liq: number;
   isLeaderByVol: boolean;
   canonicalMatch: boolean; // ticker/name closely matches the searched keyword
+  // Canonical-leader score — three independent factors, each 0..100.
+  identity: number; // does the name/ticker actually match the subject?
+  moat: number; // distribution moat: share of the narrative's volume + liquidity
+  gravity: number; // product gravity: recurring mechanics beyond attention
+  leaderScore: number; // weighted composite 0..100
+  leaderNote: string;
 }
 
 export interface NarrativeCollision {
@@ -189,6 +215,18 @@ export interface NarrativeCollision {
   competitors: NarrativeCompetitor[];
   vampRisk: boolean;
   vampReason: string;
+}
+
+/** Product-gravity proxy from the coin-type classification (0..100). Recurring
+ *  mechanics (ownership/utility) give a reason to hold beyond attention. */
+function gravityFor(cls: CoinClass): number {
+  switch (cls) {
+    case "ownership": return 80;
+    case "utility": return 60;
+    case "CTO": return 45;
+    case "celebrity": return 30;
+    default: return 20; // pure meme / team-launched: attention only
+  }
 }
 
 /** Build a collision report from DexScreener search results for the keyword. */
@@ -199,7 +237,7 @@ export function buildCollision(
 ): NarrativeCollision {
   const now = Date.now();
   const seen = new Set<string>();
-  const competitors: NarrativeCompetitor[] = [];
+  const raw: { c: NarrativeCompetitor; pair: DexPair; partial: boolean }[] = [];
 
   for (const p of pairs) {
     if (p.chainId !== "solana") continue;
@@ -208,35 +246,118 @@ export function buildCollision(
     seen.add(addr);
     const sym = (p.baseToken?.symbol ?? "").toLowerCase();
     const nm = (p.baseToken?.name ?? "").toLowerCase();
-    competitors.push({
-      symbol: p.baseToken?.symbol ?? "?",
-      address: addr,
-      ageHours: p.pairCreatedAt ? (now - p.pairCreatedAt) / 3_600_000 : 0,
-      fdv: Number(p.fdv) || 0,
-      vol24: Number(p.volume?.h24) || 0,
-      liq: Number(p.liquidity?.usd) || 0,
-      isLeaderByVol: false,
-      canonicalMatch: sym === keyword || nm === keyword,
+    const exact = sym === keyword || nm === keyword;
+    const partial = !exact && (sym.includes(keyword) || nm.includes(keyword));
+    raw.push({
+      pair: p,
+      partial,
+      c: {
+        symbol: p.baseToken?.symbol ?? "?",
+        address: addr,
+        ageHours: p.pairCreatedAt ? (now - p.pairCreatedAt) / 3_600_000 : 0,
+        fdv: Number(p.fdv) || 0,
+        vol24: Number(p.volume?.h24) || 0,
+        liq: Number(p.liquidity?.usd) || 0,
+        isLeaderByVol: false,
+        canonicalMatch: exact,
+        identity: 0,
+        moat: 0,
+        gravity: 0,
+        leaderScore: 0,
+        leaderNote: "",
+      },
     });
   }
 
-  competitors.sort((a, b) => b.vol24 - a.vol24);
-  if (competitors.length) competitors[0].isLeaderByVol = true;
+  raw.sort((a, b) => b.c.vol24 - a.c.vol24);
+  if (raw.length) raw[0].c.isLeaderByVol = true;
+  const totalVol = raw.reduce((s, r) => s + r.c.vol24, 0) || 1;
 
-  // Vamp risk: high volume but the leader's name doesn't canonically match
-  // the narrative — a correctly-named coin can vamp it.
+  // Score each competitor on three independent factors.
+  for (const { c, pair, partial } of raw) {
+    // 1. Canonical identity — exact name/ticker match beats a partial beats none.
+    c.identity = c.canonicalMatch ? 100 : partial ? 50 : 0;
+    // 2. Distribution moat — share of the narrative's volume (0..70) + liquidity depth (0..30).
+    const volShare = (c.vol24 / totalVol) * 70;
+    const liqDepth = Math.min(30, (c.liq / 50_000) * 30);
+    c.moat = Math.round(Math.min(100, volShare + liqDepth));
+    // 3. Product gravity — a reason to hold beyond attention. Blends the
+    //    coin-type signal (name) with REAL on-chain stickiness: deep liquidity
+    //    and having survived (age), both of which outlast a pure attention pop.
+    const gravBase = gravityFor(classifyCoinType(pair).type); // 0..80
+    const liqBonus = Math.min(15, (c.liq / 100_000) * 15); // deep liquidity = stickiness
+    const ageBonus = Math.min(15, (c.ageHours / (24 * 7)) * 15); // survived a week
+    c.gravity = Math.round(Math.min(100, gravBase * 0.7 + liqBonus + ageBonus));
+    c.leaderScore = Math.round(0.4 * c.identity + 0.35 * c.moat + 0.25 * c.gravity);
+    c.leaderNote = `identity ${c.identity} · moat ${c.moat} · gravity ${c.gravity}`;
+  }
+
+  const competitors = raw.map((r) => r.c);
   const leader = competitors[0];
   const selfIsLeader = leader?.address === self.address;
+
+  // The strongest CANONICAL contender — the coin that would win if the
+  // narrative resolved to its true name.
+  const canonicalContender = [...competitors]
+    .filter((c) => c.identity >= 50)
+    .sort((a, b) => b.leaderScore - a.leaderScore)[0];
+
+  // Vamp risk: the volume leader has weak canonical identity but a
+  // higher-identity competitor exists — the classic vamp setup.
   const vampRisk =
     !!leader &&
     leader.vol24 > 50_000 &&
-    !leader.canonicalMatch &&
-    competitors.some((c) => c.canonicalMatch && c.address !== leader.address);
+    leader.identity < 100 &&
+    !!canonicalContender &&
+    canonicalContender.address !== leader.address;
   const vampReason = vampRisk
-    ? `The volume leader ($${leader.symbol}) doesn't canonically match "${keyword}", but a correctly-named competitor exists. That's the exact setup where the leader gets vamped when the real name surfaces.`
+    ? `The volume leader ($${leader.symbol}, leader-score ${leader.leaderScore}) scores low on canonical identity, but $${canonicalContender!.symbol} matches the real name (score ${canonicalContender!.leaderScore}). That's the exact setup where the leader gets vamped when the true name surfaces.`
     : selfIsLeader
-      ? "This token is the current volume leader for its narrative."
-      : "No obvious vamp mismatch detected.";
+      ? `This token is the current volume leader for its narrative (leader-score ${leader.leaderScore}).`
+      : leader
+        ? `Volume leader $${leader.symbol} also holds the strongest canonical identity — no obvious vamp mismatch.`
+        : "No competing tokens found for this narrative.";
 
   return { keyword, competitors: competitors.slice(0, 8), vampRisk, vampReason };
+}
+
+// ── Narrative word-frequency miner ─────────────────────────────────────────
+
+const NARRATIVE_STOP = new Set([
+  "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "her", "was", "one",
+  "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see",
+  "two", "way", "who", "boy", "did", "its", "let", "put", "say", "she", "too", "use", "that",
+  "this", "with", "have", "from", "they", "will", "your", "what", "when", "just", "into", "than",
+  "then", "them", "some", "more", "over", "such", "only", "also", "back", "were", "been", "like",
+  "coin", "token", "solana", "crypto", "memecoin", "launch", "https", "http", "www", "com",
+]);
+
+export interface MinedWord {
+  word: string;
+  count: number;
+  share: number; // fraction of distinctive words
+}
+
+/**
+ * Extract the most-repeated distinctive words from a block of discourse (an
+ * announcement, article, thread, or set of posts). The pattern this catches:
+ * a chain launches, every article repeats the word "trillions", and a
+ * $TRILLIONS token runs on nothing but that word. Pure text analysis — the
+ * caller supplies the corpus, so nothing is fabricated.
+ */
+export function mineNarrativeWords(text: string, topN = 6): MinedWord[] {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && w.length <= 20 && !NARRATIVE_STOP.has(w) && !/^\d+$/.test(w));
+  if (!words.length) return [];
+  const freq = new Map<string, number>();
+  for (const w of words) freq.set(w, (freq.get(w) ?? 0) + 1);
+  const total = words.length;
+  return Array.from(freq.entries())
+    .map(([word, count]) => ({ word, count, share: count / total }))
+    .filter((w) => w.count >= 2) // must actually repeat
+    .sort((a, b) => b.count - a.count)
+    .slice(0, topN);
 }

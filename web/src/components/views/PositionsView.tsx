@@ -23,10 +23,23 @@ import {
   type DisciplineProfile,
 } from "@/lib/discipline";
 import { logTrade } from "@/lib/storage";
-import { fetchPrices, timeAgo } from "@/lib/utils";
+import { fetchPrices, jsonFetcher, timeAgo } from "@/lib/utils";
+import type { SafetyReport } from "@/types";
 
 const COIN_TYPES: CoinType[] = ["meme", "utility", "ownership"];
 const CONVICTIONS: Conviction[] = ["LOW", "MEDIUM", "HIGH"];
+
+/** Word-overlap (Jaccard) between two thesis texts, 0..1. Low = the thesis has
+ *  drifted from the original — honest adaptation or quiet goalpost-moving. */
+function thesisOverlap(a: string, b: string): number {
+  const norm = (s: string) =>
+    new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+  const sa = norm(a);
+  const sb = norm(b);
+  if (!sa.size || !sb.size) return 1;
+  const inter = Array.from(sa).filter((w) => sb.has(w)).length;
+  return inter / (sa.size + sb.size - inter);
+}
 
 export default function PositionsView() {
   const [profile, setProfile] = useState<DisciplineProfile>(() => getProfile());
@@ -36,6 +49,10 @@ export default function PositionsView() {
   const [checks, setChecks] = useState<EntryCheck[] | null>(null);
   const [pendingDraft, setPendingDraft] = useState<Position | null>(null);
   const [closing, setClosing] = useState<Position | null>(null);
+
+  // Live on-chain / narrative events per open position, for cross-feed
+  // invalidation alerts (creator selling, structure break, vamp risk).
+  const [intel, setIntel] = useState<Record<string, string[]>>({});
 
   const open = positions.filter((p) => p.status === "OPEN");
   const closed = positions.filter((p) => p.status === "CLOSED");
@@ -64,6 +81,34 @@ export default function PositionsView() {
     const id = setInterval(refresh, 60_000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // Cross-feed thesis-invalidation watch: pull each open position's safety
+  // report (server-cached 5 min) and derive adverse events that should quote
+  // the user's own invalidation back at them. Slow interval — few positions.
+  const refreshIntel = useCallback(async () => {
+    const addrs = getPositions()
+      .filter((p) => p.status === "OPEN" && p.address)
+      .map((p) => p.address);
+    for (const addr of Array.from(new Set(addrs))) {
+      try {
+        const r = await jsonFetcher<SafetyReport>(`/api/safety?mint=${addr}`);
+        const events: string[] = [];
+        if (r.creator?.status === "distributing") events.push("The creator wallet is distributing (selling).");
+        if (r.chart?.structure?.state === "DOWNTREND") events.push("Market structure just broke down to a downtrend.");
+        if (r.collision?.vampRisk) events.push("A vamp risk appeared — a better-named competitor is threatening the narrative.");
+        if (r.deep?.clusterTrend && r.deep.clusterTrend.startsWith("⚠")) events.push("A funding cluster is reducing (coordinated selling).");
+        setIntel((prev) => ({ ...prev, [addr]: events }));
+      } catch {
+        /* leave prior intel in place */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshIntel();
+    const id = setInterval(refreshIntel, 300_000);
+    return () => clearInterval(id);
+  }, [refreshIntel]);
 
   function persistPositions(next: Position[]) {
     savePositions(next);
@@ -173,6 +218,7 @@ export default function PositionsView() {
               key={p.id}
               p={p}
               profile={profile}
+              events={p.address ? intel[p.address] ?? [] : []}
               onChange={(next) => {
                 persistPositions(positions.map((x) => (x.id === next.id ? next : x)));
               }}
@@ -400,11 +446,13 @@ function NewPositionForm({
 function PositionCard({
   p,
   profile,
+  events,
   onChange,
   onClose,
 }: {
   p: Position;
   profile: DisciplineProfile;
+  events: string[];
   onChange: (p: Position) => void;
   onClose: () => void;
 }) {
@@ -420,6 +468,7 @@ function PositionCard({
   const roundtripFiring =
     value !== null && profile.lifeChangingUsd > 0 && value >= profile.lifeChangingUsd && !p.roundtripAcked;
   const stopFiring = pnlPct !== null && pnlPct <= -40 && !p.stopAcked;
+  const upBig = pnlPct !== null && pnlPct >= 50;
   const thesisStale = ageDays >= 2 && p.thesisHistory.length === 1;
   const pendingLadder = p.ladder.find((l) => l.hit && l.complied === null);
 
@@ -475,6 +524,22 @@ function PositionCard({
         </div>
       </div>
 
+      {/* Cross-feed thesis-invalidation watch — quotes their own words when an
+          on-chain/narrative event fires, not just on price */}
+      {events.length > 0 && (
+        <div className="px-3 py-2 rounded-input text-sm" style={{ background: "var(--signal-short)15", border: "1px solid var(--signal-short)" }}>
+          <b style={{ color: "var(--signal-short)" }}>Thesis-invalidation watch:</b>
+          <ul className="mt-0.5 space-y-0.5">
+            {events.map((e, i) => (
+              <li key={i} style={{ color: "var(--signal-short)" }}>• {e}</li>
+            ))}
+          </ul>
+          <div className="mt-1 text-[var(--text-secondary)]">
+            You said you&apos;d sell if: <i>&quot;{p.invalidation}&quot;</i> — does this count?
+          </div>
+        </div>
+      )}
+
       {/* Stop-loss rule alert — quotes their own words */}
       {stopFiring && (
         <div className="px-3 py-2 rounded-input text-sm" style={{ background: "var(--signal-short)15", border: "1px solid var(--signal-short)" }}>
@@ -515,6 +580,15 @@ function PositionCard({
           </details>
         )}
       </div>
+      {/* Semantic thesis divergence — the current thesis barely overlaps day 1 */}
+      {p.thesisHistory.length > 1 &&
+        thesisOverlap(p.thesisHistory[0].why, p.why) < 0.3 && (
+          <div className="px-3 py-2 rounded-input text-xs" style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--signal-neutral)", color: "var(--signal-neutral)" }}>
+            ⚠ Your thesis has drifted from day one — the words barely overlap. That&apos;s
+            fine if the story genuinely changed; it&apos;s a warning if you&apos;re quietly
+            moving the goalposts to justify still holding.
+          </div>
+        )}
       {thesisStale && !rewriting && (
         <div className="px-3 py-2 rounded-input text-sm" style={{ background: "var(--bg-elevated)" }}>
           This position is {ageDays.toFixed(0)} days old and still running on its
@@ -542,8 +616,20 @@ function PositionCard({
         </div>
       )}
 
-      {/* Re-evaluation slider */}
-      <div className="px-3 py-2 rounded-input" style={{ background: "var(--bg-elevated)" }}>
+      {/* Re-evaluation slider — auto-emphasized when the position is up big */}
+      <div
+        className="px-3 py-2 rounded-input"
+        style={
+          upBig
+            ? { background: "var(--bg-elevated)", border: "1px solid var(--signal-long)" }
+            : { background: "var(--bg-elevated)" }
+        }
+      >
+        {upBig && (
+          <div className="text-xs font-mono-display mb-1" style={{ color: "var(--signal-long)" }}>
+            ▲ UP {pnlPct!.toFixed(0)}% — this is exactly when to re-evaluate. Greed moves the target; the question below doesn&apos;t.
+          </div>
+        )}
         <div className="text-sm mb-1">
           <b>Re-evaluate:</b> if you didn&apos;t own this and saw it at the current
           price right now — how much would you buy?

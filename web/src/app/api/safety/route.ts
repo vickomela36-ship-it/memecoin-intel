@@ -13,6 +13,9 @@ import {
   narrativeKeyword,
   type OHLCV,
 } from "@/modules/memecoin/detectors";
+import { analyzeChart } from "@/lib/ta";
+import { kv } from "@/lib/kv";
+import type { ChartInfo } from "@/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,28 +25,9 @@ const HELIUS_KEY =
 const BIRDEYE_KEY =
   process.env.BIRDEYE_API_KEY ?? "dac9521a4c004f65897b2bd3e52cf10d";
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
-
 function num(v: unknown): number {
   const n = Number(v);
   return isFinite(n) ? n : 0;
-}
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** fetch with one 429/5xx backoff — the providers are the rate-limit cost. */
@@ -168,6 +152,26 @@ interface SigInfo {
 interface ParsedTx {
   blockTime?: number;
   transaction?: { message?: { accountKeys?: (string | { pubkey?: string })[] } };
+}
+
+interface TokenAccResp {
+  value?: { account?: { data?: { parsed?: { info?: { tokenAmount?: { uiAmount?: number } } } } } }[];
+}
+
+/** Sum a wallet's balance of a specific mint (uiAmount across its token accts). */
+async function creatorTokenBalance(owner: string, mint: string): Promise<number | null> {
+  const r = await heliusRpc<TokenAccResp>("getTokenAccountsByOwner", [
+    owner,
+    { mint },
+    { encoding: "jsonParsed" },
+  ]);
+  if (!r?.value) return null;
+  let sum = 0;
+  for (const acc of r.value) {
+    const ui = acc?.account?.data?.parsed?.info?.tokenAmount?.uiAmount;
+    if (typeof ui === "number") sum += ui;
+  }
+  return sum;
 }
 
 async function walletHistory(owner: string): Promise<{ txCount: number; firstSeen: number | null; funder: string | null }> {
@@ -470,24 +474,79 @@ export async function GET(req: NextRequest) {
     null;
   let creatorStatus: SafetyReport["creator"]["status"] = "unknown";
   let creatorNote = "Creator wallet not resolvable from free sources.";
+  let creatorBalancePct: number | null = null;
   if (creatorAddr) {
-    const stillTop = nonLp.some((h) => h.owner === creatorAddr);
-    creatorStatus = stillTop ? "holding" : "distributing";
-    creatorNote = stillTop
-      ? "Creator is still among the top holders — has not fully exited."
-      : "Creator is not in the visible top holders — may have distributed. Run a deep scan to trace balance changes.";
+    // Measured: fetch the creator's live balance of this mint and diff it
+    // against the last snapshot to read accumulate / hold / distribute over
+    // time — a real "creator is selling" signal, not just a top-holder guess.
+    const bal = await creatorTokenBalance(creatorAddr, mint);
+    const decimals = num(rug?.token?.decimals) || num(das?.token_info?.decimals) || 0;
+    const rawSupply = num(rug?.token?.supply) || num(das?.token_info?.supply) || 0;
+    const uiSupply = rawSupply > 0 && decimals > 0 ? rawSupply / 10 ** decimals : rawSupply;
+    if (bal !== null && uiSupply > 0) creatorBalancePct = Number(((bal / uiSupply) * 100).toFixed(2));
+
+    if (bal !== null) {
+      const snap = (await kv(["GET", `mi:cbal:${mint}`])) as string | null;
+      let prev: { bal: number; at: number } | null = null;
+      try { prev = snap ? JSON.parse(snap) : null; } catch { prev = null; }
+      if (prev && prev.bal > 0) {
+        const change = (bal - prev.bal) / prev.bal;
+        const hrs = Math.max(1, Math.round((Date.now() - prev.at) / 3_600_000));
+        if (change < -0.05) {
+          creatorStatus = "distributing";
+          creatorNote = `Creator balance is DOWN ${Math.abs(change * 100).toFixed(0)}% vs ${hrs}h ago — actively distributing${creatorBalancePct !== null ? `, now ~${creatorBalancePct}% of supply` : ""}. This is the creator selling.`;
+        } else if (change > 0.05) {
+          creatorStatus = "accumulating";
+          creatorNote = `Creator balance is UP ${(change * 100).toFixed(0)}% vs ${hrs}h ago — adding, not selling${creatorBalancePct !== null ? `, now ~${creatorBalancePct}% of supply` : ""}.`;
+        } else {
+          creatorStatus = "holding";
+          creatorNote = `Creator balance is flat vs ${hrs}h ago${creatorBalancePct !== null ? ` (~${creatorBalancePct}% of supply)` : ""} — holding steady.`;
+        }
+      } else {
+        const stillTop = nonLp.some((h) => h.owner === creatorAddr);
+        creatorStatus = stillTop ? "holding" : "distributing";
+        creatorNote = `First balance snapshot recorded${creatorBalancePct !== null ? ` (~${creatorBalancePct}% of supply)` : ""} — re-check later to see if the creator is accumulating or selling.`;
+      }
+      await kv(["SET", `mi:cbal:${mint}`, JSON.stringify({ bal, at: Date.now() }), "EX", 7 * 86400]);
+    } else {
+      const stillTop = nonLp.some((h) => h.owner === creatorAddr);
+      creatorStatus = stillTop ? "holding" : "distributing";
+      creatorNote = stillTop
+        ? "Creator is still among the top holders — has not fully exited."
+        : "Creator is not in the visible top holders — may have distributed. Balance not readable from free RPC.";
+    }
   }
 
   // Deep scan (fresh wallets + funding clusters)
   let deepResult: SafetyReport["deep"] = null;
   if (deep && nonLp.length) {
     const d = await deepScan(nonLp.map((h) => ({ owner: h.owner, pct: h.pct })));
+
+    // Cluster sell-pressure: snapshot the combined cluster supply and compare
+    // to the last deep scan — a falling number means a cluster is reducing.
+    const combinedPct = Number(d.clusters.reduce((s, c) => s + (c.pctOfSupply ?? 0), 0).toFixed(1));
+    let clusterTrend: string | null = null;
+    const csnap = (await kv(["GET", `mi:clu:${mint}`])) as string | null;
+    let cprev: { pct: number; at: number } | null = null;
+    try { cprev = csnap ? JSON.parse(csnap) : null; } catch { cprev = null; }
+    if (cprev) {
+      const hrs = Math.max(1, Math.round((Date.now() - cprev.at) / 3_600_000));
+      const delta = combinedPct - cprev.pct;
+      if (delta < -1) clusterTrend = `⚠ Clusters are REDUCING: combined supply fell from ${cprev.pct}% to ${combinedPct}% since ${hrs}h ago — coordinated wallets are selling into you.`;
+      else if (delta > 1) clusterTrend = `Clusters GREW from ${cprev.pct}% to ${combinedPct}% since ${hrs}h ago — accumulating, not exiting.`;
+      else clusterTrend = `Cluster supply flat (~${combinedPct}%) vs ${hrs}h ago.`;
+    } else if (d.clusters.length) {
+      clusterTrend = `Baseline recorded: clusters hold ~${combinedPct}% combined. Re-run a deep scan later to catch them reducing.`;
+    }
+    await kv(["SET", `mi:clu:${mint}`, JSON.stringify({ pct: combinedPct, at: Date.now() }), "EX", 7 * 86400]);
+
     deepResult = {
       ran: true,
       freshWallets: d.freshWallets,
       topSampled: d.sampled,
       fundingClusters: d.clusters,
       note: d.note,
+      clusterTrend,
     };
     checks.push({
       id: "fresh",
@@ -524,6 +583,45 @@ export async function GET(req: NextRequest) {
   // Botted-chart detection
   const botted = detectBottedChart(ohlcv);
   if (botted.length) sources.push("Birdeye OHLCV");
+
+  // ── Market-structure / fib / confluence / invalidation TA ─────────────
+  // Reuses the OHLCV we already fetched — no extra provider cost. Age-gated:
+  // very young coins get raw trend only (no meaningful levels to draw yet).
+  let chart: ChartInfo | null = null;
+  if (ohlcv.length >= 12) {
+    const ageHours = dex?.pairCreatedAt ? (Date.now() - dex.pairCreatedAt) / 3_600_000 : 0;
+    const ca = analyzeChart(ohlcv, ageHours, "body");
+    if (!sources.includes("Birdeye OHLCV")) sources.push("Birdeye OHLCV");
+    chart = {
+      usable: ca.usable,
+      suppressReason: ca.suppressReason,
+      anchorMode: ca.anchorMode,
+      price: ca.price,
+      structure: { state: ca.structure.state, detail: ca.structure.detail },
+      fib: ca.fib
+        ? {
+            drawn: ca.fib.drawn,
+            reason: ca.fib.reason,
+            low: ca.fib.low,
+            high: ca.fib.high,
+            levels: ca.fib.levels,
+            goldenPocket: ca.fib.goldenPocket,
+            inGoldenPocket: ca.fib.inGoldenPocket,
+          }
+        : null,
+      confluence: ca.confluence
+        ? { signals: ca.confluence.signals, count: ca.confluence.count, grade: ca.confluence.grade }
+        : null,
+      invalidation: ca.invalidation
+        ? {
+            level: ca.invalidation.level,
+            basis: ca.invalidation.basis,
+            confirmed: ca.invalidation.confirmed,
+            note: ca.invalidation.note,
+          }
+        : null,
+    };
+  }
   if (botted[0] && botted[0].confidence >= 0.55) {
     checks.push({
       id: "botted",
@@ -546,6 +644,7 @@ export async function GET(req: NextRequest) {
         competitors: c.competitors.map((x) => ({
           symbol: x.symbol, address: x.address, ageHours: Number(x.ageHours.toFixed(1)),
           fdv: x.fdv, vol24: x.vol24, isLeaderByVol: x.isLeaderByVol, canonicalMatch: x.canonicalMatch,
+          identity: x.identity, moat: x.moat, gravity: x.gravity, leaderScore: x.leaderScore, leaderNote: x.leaderNote,
         })),
         vampRisk: c.vampRisk,
         vampReason: c.vampReason,
@@ -570,11 +669,12 @@ export async function GET(req: NextRequest) {
     verdict: worstOf(checks.filter((c) => c.verdict !== "unknown")),
     checks,
     coinType: ct,
-    botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain })),
+    botted: botted.map((b) => ({ pattern: b.pattern, confidence: b.confidence, explain: b.explain, range: b.range })),
     collision,
+    chart,
     holders,
     holderCount: rug?.totalHolders ? num(rug.totalHolders) : null,
-    creator: { address: creatorAddr, status: creatorStatus, note: creatorNote },
+    creator: { address: creatorAddr, status: creatorStatus, note: creatorNote, balancePct: creatorBalancePct },
     deep: deepResult,
     sources,
   };

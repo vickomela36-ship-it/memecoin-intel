@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cachedScan } from "@/lib/scan-cache";
+import { kv, kvConfigured } from "@/lib/kv";
 import type { MemeSignal } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -26,21 +27,11 @@ function memShouldAlert(key: string): boolean {
 }
 
 async function shouldAlert(key: string): Promise<boolean> {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return memShouldAlert(key);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(["SET", `mi:alerted:${key}`, "1", "EX", 21600, "NX"]),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result === "OK"; // null = key existed = already alerted
-  } catch {
-    return memShouldAlert(key);
-  }
+  if (!kvConfigured()) return memShouldAlert(key);
+  // NX set with a 6h TTL: "OK" means we won the race and should alert; null
+  // means the key already existed = already alerted in this window.
+  const res = await kv(["SET", `mi:alerted:${key}`, "1", "EX", 21600, "NX"]);
+  return res === "OK";
 }
 
 async function tgCall<T>(token: string, method: string, body?: object): Promise<T | null> {

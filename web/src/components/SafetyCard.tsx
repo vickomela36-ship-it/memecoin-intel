@@ -3,6 +3,8 @@
 import { useState } from "react";
 import type { SafetyReport, SafetyVerdict } from "@/types";
 import { timeAgo } from "@/lib/utils";
+import ClusterGraph from "./ClusterGraph";
+import Term from "./Term";
 
 const V_COLOR: Record<SafetyVerdict, string> = {
   pass: "var(--signal-long)",
@@ -111,13 +113,18 @@ export default function SafetyCard({
               <div className="px-3 pb-2">
                 <div className="text-xs text-[var(--text-secondary)] mb-1">{report.collision.vampReason}</div>
                 <table className="data-table">
-                  <thead><tr><th>Token</th><th>Age</th><th>MCap</th><th>Vol 24h</th><th></th></tr></thead>
+                  <thead><tr><th>Token</th><th>Leader</th><th>Age</th><th>MCap</th><th>Vol 24h</th><th></th></tr></thead>
                   <tbody>
                     {report.collision.competitors.map((c) => (
                       <tr key={c.address}>
                         <td className="font-mono-display">
                           ${c.symbol}{c.canonicalMatch && " ✓"}
-                          {c.isLeaderByVol && <span style={{ color: "var(--signal-edge)" }}> ◀ leader</span>}
+                          {c.isLeaderByVol && <span style={{ color: "var(--signal-edge)" }}> ◀ vol</span>}
+                        </td>
+                        <td className="font-mono-display" title={c.leaderNote}>
+                          <span style={{ color: c.leaderScore >= 70 ? "var(--signal-long)" : c.leaderScore >= 40 ? "var(--signal-neutral)" : "var(--text-tertiary)" }}>
+                            {c.leaderScore}
+                          </span>
                         </td>
                         <td>{c.ageHours < 24 ? `${c.ageHours.toFixed(0)}h` : `${(c.ageHours / 24).toFixed(0)}d`}</td>
                         <td>${(c.fdv / 1000).toFixed(0)}K</td>
@@ -134,7 +141,9 @@ export default function SafetyCard({
                     ))}
                   </tbody>
                 </table>
-                <div className="text-xs text-[var(--text-tertiary)] mt-1">✓ = ticker/name canonically matches the narrative.</div>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                  ✓ = canonical name match. Leader score = 40% identity (name matches the subject) + 35% distribution moat (share of the narrative&apos;s volume &amp; liquidity) + 25% product gravity (recurring mechanics beyond attention). Hover a score for the breakdown.
+                </div>
               </div>
             </details>
           )}
@@ -143,12 +152,16 @@ export default function SafetyCard({
           {report.botted.length > 1 && (
             <details className="rounded-input" style={{ background: "var(--bg-elevated)" }}>
               <summary className="px-3 py-1.5 cursor-pointer text-sm" style={{ color: "var(--signal-short)" }}>
-                ⚠ {report.botted.length} manufactured-chart patterns detected
+                ⚠ {report.botted.length} <Term k="market maker">manufactured-chart</Term> patterns detected
               </summary>
               <ul className="px-3 pb-2 text-xs space-y-1">
                 {report.botted.map((b) => (
                   <li key={b.pattern}>
-                    <b>{b.pattern}</b> ({Math.round(b.confidence * 100)}%) — {b.explain}
+                    <b>{b.pattern}</b> ({Math.round(b.confidence * 100)}%)
+                    {b.range && (
+                      <span className="text-[var(--text-tertiary)]"> · candles {b.range[0]}–{b.range[1]}</span>
+                    )}{" "}
+                    — {b.explain}
                   </li>
                 ))}
               </ul>
@@ -195,7 +208,9 @@ export default function SafetyCard({
                   </tbody>
                 </table>
                 <div className="text-xs text-[var(--text-tertiary)] mt-1">
-                  LP pool rows are the liquidity, not a trader. Insider = bundler/insider-tagged by Rugcheck. Run DEEP SCAN below to trace which of these were funded by the same wallet.
+                  <Term k="lp">LP</Term> pool rows are the liquidity, not a trader.
+                  Insider = <Term k="bundling">bundler</Term>/insider-tagged by Rugcheck.
+                  Run DEEP SCAN below to trace which of these were funded by the same wallet.
                 </div>
               </div>
             </details>
@@ -236,15 +251,31 @@ export default function SafetyCard({
           {report.deep?.ran ? (
             <div className="rounded-input px-3 py-2 text-xs" style={{ background: "var(--bg-elevated)" }}>
               <b className="text-[var(--text-secondary)]">Deep scan:</b> {report.deep.note}
+              {report.deep.clusterTrend && (
+                <div
+                  className="mt-1 font-mono-display"
+                  style={{ color: report.deep.clusterTrend.startsWith("⚠") ? "var(--signal-short)" : "var(--text-secondary)" }}
+                >
+                  {report.deep.clusterTrend}
+                </div>
+              )}
               {report.deep.fundingClusters.length > 0 && (
-                <ul className="mt-1 space-y-0.5">
-                  {report.deep.fundingClusters.map((c, i) => (
-                    <li key={i} style={{ color: "var(--signal-short)" }}>
-                      ⚠ {c.holders} holders funded from {c.origin}
-                      {c.withinHours !== null && ` within ${c.withinHours}h`} (~{c.pctOfSupply}% supply)
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ul className="mt-1 space-y-0.5">
+                    {report.deep.fundingClusters.map((c, i) => (
+                      <li key={i} style={{ color: "var(--signal-short)" }}>
+                        ⚠ {c.holders} holders funded from {c.origin}
+                        {c.withinHours !== null && ` within ${c.withinHours}h`} (~{c.pctOfSupply}% supply)
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2">
+                    <ClusterGraph clusters={report.deep.fundingClusters} />
+                    <div className="text-[10px] text-[var(--text-tertiary)]">
+                      Each hub is a funding origin; orbiting dots are the wallets it funded. Hub size = combined % of supply — one funder, many wallets, one entity.
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           ) : onDeepScan ? (

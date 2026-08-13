@@ -18,12 +18,19 @@ import { initSync } from "@/lib/sync";
 // Confluence/Safety/Creators/Positions/Portfolio/Challenge JS. They only
 // load when their tab is first opened.
 function PanelSkeleton() {
-  return <div className="card text-sm text-[var(--text-secondary)]">Loading…</div>;
+  return (
+    <div className="space-y-3" aria-busy="true" aria-label="loading panel">
+      <div className="skeleton h-9 w-2/5" />
+      <div className="skeleton h-28 w-full" />
+      <div className="skeleton h-28 w-full" />
+    </div>
+  );
 }
 
 const ConfluenceView = dynamic(() => import("@/components/views/ConfluenceView"), { loading: PanelSkeleton, ssr: false });
 const IntelView = dynamic(() => import("@/components/views/IntelView"), { loading: PanelSkeleton, ssr: false });
 const CreatorsView = dynamic(() => import("@/components/views/CreatorsView"), { loading: PanelSkeleton, ssr: false });
+const CallsView = dynamic(() => import("@/components/views/CallsView"), { loading: PanelSkeleton, ssr: false });
 const PositionsView = dynamic(() => import("@/components/views/PositionsView"), { loading: PanelSkeleton, ssr: false });
 const PortfolioView = dynamic(() => import("@/components/views/PortfolioView"), { loading: PanelSkeleton, ssr: false });
 const ChallengeView = dynamic(() => import("@/components/views/ChallengeView"), { loading: PanelSkeleton, ssr: false });
@@ -74,7 +81,7 @@ export default function Home() {
       <div className="sticky top-0 z-20 bg-[var(--bg-primary)]">
         <SignalStrip active={memeActive} />
         <header className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
-          <h1 className="font-mono-display text-lg tracking-widest">
+          <h1 className="font-display text-lg font-bold tracking-widest">
             MEMECOIN&nbsp;INTEL
           </h1>
           <div className="flex items-center gap-3">
@@ -109,6 +116,7 @@ export default function Home() {
         {tab === "confluence" && <ConfluenceView />}
         {tab === "intel" && <IntelView />}
         {tab === "creators" && <CreatorsView />}
+        {tab === "calls" && <CallsView />}
         {tab === "positions" && <PositionsView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
@@ -118,6 +126,17 @@ export default function Home() {
       <WatchSafetyPopup />
 
       <TrackRecord refreshKey={trackKey} />
+
+      {/* Persistent, non-dismissible risk disclaimer — every tab, always visible */}
+      <footer
+        className="border-t border-[var(--border-subtle)] px-4 py-2 text-[11px] leading-snug text-[var(--text-tertiary)]"
+        style={{ background: "var(--bg-surface)" }}
+      >
+        Not financial advice. Memecoin Intel surfaces information and does not
+        predict outcomes. Memecoin trading carries substantial risk of{" "}
+        <b className="text-[var(--text-secondary)]">total loss</b> — never risk
+        more than you can afford to lose.
+      </footer>
     </main>
   );
 }
