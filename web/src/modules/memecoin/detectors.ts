@@ -122,15 +122,26 @@ export function detectBottedChart(candles: OHLCV): BottedPattern[] {
     });
   }
 
-  // 2. Instant candle + bot buys — one giant early candle then mechanical follow
+  // 2. Instant candle + bot buys — one giant early candle THEN mechanical
+  //    follow-through. We now actually MEASURE the follow-through (regularity
+  //    of the next candles) rather than asserting it: a big dev buy alone is
+  //    weaker signal than a big buy followed by bot-regular buying.
   const avgBody = mean(bodies) || 1;
   const earlyBig = candles.slice(0, 3).findIndex((c) => Math.abs(c.c - c.o) > avgBody * 6);
   if (earlyBig >= 0) {
+    const follow = candles.slice(earlyBig + 1, earlyBig + 8);
+    const fb = follow.map((c) => Math.abs(c.c - c.o));
+    const followCv = follow.length >= 4 && mean(fb) > 0 ? stddev(fb) / mean(fb) : 1;
+    // Green, low-variance follow-through = mechanical buying by a bot.
+    const upFollow = follow.filter((c) => c.c >= c.o).length;
+    const mechanical = follow.length >= 4 && followCv < 0.5 && upFollow / follow.length >= 0.7;
     out.push({
       pattern: "Instant candle",
-      confidence: 0.7,
-      explain: "A single enormous candle at/near launch — usually a large dev buy — followed by mechanical buying. The chart was kick-started by one entity.",
-      range: [earlyBig, Math.min(earlyBig + 1, candles.length - 1)],
+      confidence: mechanical ? 0.85 : 0.55,
+      explain: mechanical
+        ? "A single enormous candle at/near launch (a large dev buy) FOLLOWED by low-variance, mostly-green candles — measured mechanical buying. The chart was kick-started and is being walked up by one entity."
+        : "A single enormous candle at/near launch — usually a large dev buy. The follow-through looks organic rather than botted, so treat this as concentration risk, not a confirmed bot chart.",
+      range: [earlyBig, Math.min(earlyBig + follow.length, candles.length - 1)],
     });
   }
 
@@ -261,8 +272,13 @@ export function buildCollision(
     const volShare = (c.vol24 / totalVol) * 70;
     const liqDepth = Math.min(30, (c.liq / 50_000) * 30);
     c.moat = Math.round(Math.min(100, volShare + liqDepth));
-    // 3. Product gravity — recurring mechanics from the coin-type classifier.
-    c.gravity = gravityFor(classifyCoinType(pair).type);
+    // 3. Product gravity — a reason to hold beyond attention. Blends the
+    //    coin-type signal (name) with REAL on-chain stickiness: deep liquidity
+    //    and having survived (age), both of which outlast a pure attention pop.
+    const gravBase = gravityFor(classifyCoinType(pair).type); // 0..80
+    const liqBonus = Math.min(15, (c.liq / 100_000) * 15); // deep liquidity = stickiness
+    const ageBonus = Math.min(15, (c.ageHours / (24 * 7)) * 15); // survived a week
+    c.gravity = Math.round(Math.min(100, gravBase * 0.7 + liqBonus + ageBonus));
     c.leaderScore = Math.round(0.4 * c.identity + 0.35 * c.moat + 0.25 * c.gravity);
     c.leaderNote = `identity ${c.identity} · moat ${c.moat} · gravity ${c.gravity}`;
   }

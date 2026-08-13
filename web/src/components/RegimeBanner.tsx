@@ -11,6 +11,13 @@ interface MajorsResp {
   majors: { sym: string; state: string; up: boolean }[];
   majorsUp: number | null;
 }
+interface TrenchesResp {
+  available: boolean;
+  runnersThisWeek: number;
+  seenThisWeek: number;
+  freshLaunchMedianMcap: number;
+  freshLaunchCount: number;
+}
 
 const STATE_COLOR = {
   HOT: "var(--signal-long)",
@@ -48,6 +55,12 @@ export default function RegimeBanner({
   const majorsUp = realMajors ? majorsData!.majorsUp! : proxyUp;
   const regime = computeRegime({ breadthPct, medianH24, majorsUp });
   const clr = STATE_COLOR[regime.state];
+
+  // Real trenches heat metrics from the creator ledger (measured, not proxied).
+  const { data: trenches } = useSWR<TrenchesResp>("/api/trenches", (u: string) => jsonFetcher<TrenchesResp>(u), {
+    refreshInterval: 300_000,
+    revalidateOnFocus: false,
+  });
   const coldWeek = regime.state === "COLD" && hit.rate !== null && hit.rate < 0.4;
 
   return (
@@ -77,6 +90,17 @@ export default function RegimeBanner({
               {m.sym} {m.state === "UPTREND" ? "▲" : m.state === "DOWNTREND" ? "▼" : m.state === "REVERSAL FORMING" ? "↺" : "→"}
             </span>
           ))}
+        </div>
+      )}
+      {trenches?.available && (
+        <div className="flex gap-3 mt-1 text-xs font-mono-display text-[var(--text-tertiary)] flex-wrap">
+          <span style={{ color: trenches.runnersThisWeek > 0 ? "var(--signal-long)" : undefined }}>
+            {trenches.runnersThisWeek} ran &gt;10x / 7d
+          </span>
+          {trenches.freshLaunchCount > 0 && (
+            <span>fresh-launch median ${(trenches.freshLaunchMedianMcap / 1000).toFixed(0)}K</span>
+          )}
+          <span>{trenches.seenThisWeek} tracked this week</span>
         </div>
       )}
       <div className="text-sm text-[var(--text-secondary)] mt-1">{regime.guidance}</div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { jsonFetcher } from "@/lib/utils";
 import FollowStream from "@/components/FollowStream";
+import KolLeaderboard from "@/components/KolLeaderboard";
 
 interface CallStat {
   ca: string;
@@ -148,6 +149,7 @@ export default function CallsView() {
         </div>
       )}
 
+      <KolLeaderboard />
       <FollowStream />
     </div>
   );
