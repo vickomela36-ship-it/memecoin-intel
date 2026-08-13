@@ -29,6 +29,18 @@ import type { SafetyReport } from "@/types";
 const COIN_TYPES: CoinType[] = ["meme", "utility", "ownership"];
 const CONVICTIONS: Conviction[] = ["LOW", "MEDIUM", "HIGH"];
 
+/** Word-overlap (Jaccard) between two thesis texts, 0..1. Low = the thesis has
+ *  drifted from the original — honest adaptation or quiet goalpost-moving. */
+function thesisOverlap(a: string, b: string): number {
+  const norm = (s: string) =>
+    new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+  const sa = norm(a);
+  const sb = norm(b);
+  if (!sa.size || !sb.size) return 1;
+  const inter = Array.from(sa).filter((w) => sb.has(w)).length;
+  return inter / (sa.size + sb.size - inter);
+}
+
 export default function PositionsView() {
   const [profile, setProfile] = useState<DisciplineProfile>(() => getProfile());
   const [positions, setPositions] = useState<Position[]>(() => getPositions());
@@ -568,6 +580,15 @@ function PositionCard({
           </details>
         )}
       </div>
+      {/* Semantic thesis divergence — the current thesis barely overlaps day 1 */}
+      {p.thesisHistory.length > 1 &&
+        thesisOverlap(p.thesisHistory[0].why, p.why) < 0.3 && (
+          <div className="px-3 py-2 rounded-input text-xs" style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--signal-neutral)", color: "var(--signal-neutral)" }}>
+            ⚠ Your thesis has drifted from day one — the words barely overlap. That&apos;s
+            fine if the story genuinely changed; it&apos;s a warning if you&apos;re quietly
+            moving the goalposts to justify still holding.
+          </div>
+        )}
       {thesisStale && !rewriting && (
         <div className="px-3 py-2 rounded-input text-sm" style={{ background: "var(--bg-elevated)" }}>
           This position is {ageDays.toFixed(0)} days old and still running on its

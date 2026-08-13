@@ -26,7 +26,8 @@ interface SocialResp {
   coordinated?: { coordinated: boolean; authors: string[]; withinMin: number | null; note: string };
   human?: {
     author: string; followers: number; text: string; createdAt: number; url?: string;
-    earlyScore: number; hasThesis: boolean; wallet?: string | null; track?: KolTrack | null;
+    earlyScore: number; hasThesis: boolean; wallet?: string | null;
+    sellingWhatTheyShill?: boolean; track?: KolTrack | null;
   }[];
 }
 
@@ -148,10 +149,19 @@ function SocialSection({ mint, symbol }: { mint: string; symbol: string }) {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-mono-display text-[var(--text-tertiary)] hover:underline"
-                  title="Wallet stated in this post — cross-check whether they're selling what they shill"
+                  title="Wallet stated in this post"
                 >
                   wallet {p.wallet.slice(0, 4)}…{p.wallet.slice(-4)} ↗
                 </a>
+              )}
+              {p.sellingWhatTheyShill && (
+                <span
+                  className="font-mono-display px-1.5 py-0.5 rounded-input pulse-live"
+                  style={{ color: "var(--signal-short)", border: "1px solid var(--signal-short)" }}
+                  title="This wallet has recently sold the token this account is posting bullishly about"
+                >
+                  ⚠ SELLING WHAT THEY SHILL
+                </span>
               )}
             </div>
           )}

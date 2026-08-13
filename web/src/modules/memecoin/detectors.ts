@@ -156,19 +156,28 @@ export function detectBottedChart(candles: OHLCV): BottedPattern[] {
     });
   }
 
-  // 4. Staircase — repeated similar up-steps with flat consolidation between
-  let steps = 0;
+  // 4. Staircase — repeated up-steps with flat consolidation between. We now
+  //    also verify the steps are EVENLY SPACED (low variance in the gap between
+  //    consecutive steps): regular spacing is a bot on a schedule; irregular
+  //    spacing is just a trending chart and shouldn't fire as strongly.
+  const stepIdx: number[] = [];
   for (let i = 2; i < candles.length; i++) {
     const up = candles[i].c > candles[i - 1].c * 1.05;
     const flatBefore = Math.abs(candles[i - 1].c - candles[i - 2].c) < candles[i - 2].c * 0.01;
-    if (up && flatBefore) steps++;
+    if (up && flatBefore) stepIdx.push(i);
   }
-  if (steps >= 4) {
+  if (stepIdx.length >= 4) {
+    const gaps: number[] = [];
+    for (let i = 1; i < stepIdx.length; i++) gaps.push(stepIdx[i] - stepIdx[i - 1]);
+    const gapCv = mean(gaps) > 0 ? stddev(gaps) / mean(gaps) : 1;
+    const regular = gapCv < 0.4; // evenly spaced
     out.push({
       pattern: "Staircase",
-      confidence: Math.min(0.9, 0.4 + steps * 0.08),
-      explain: `${steps} identical step-ups with flat consolidation between them at regular intervals — a bot walking the price up on a schedule.`,
-      range: null,
+      confidence: regular ? Math.min(0.9, 0.45 + stepIdx.length * 0.08) : Math.min(0.6, 0.3 + stepIdx.length * 0.05),
+      explain: regular
+        ? `${stepIdx.length} step-ups with flat consolidation between them at EVENLY SPACED intervals (gap variance ${(gapCv * 100).toFixed(0)}%) — a bot walking the price up on a schedule.`
+        : `${stepIdx.length} step-ups with flat pauses, but the spacing is irregular — could be an ordinary trending chart rather than a scheduled bot. Weight lightly.`,
+      range: [stepIdx[0], stepIdx[stepIdx.length - 1]],
     });
   }
 

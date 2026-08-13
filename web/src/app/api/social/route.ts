@@ -39,6 +39,26 @@ interface LunarPost {
   creator_followers?: number;
 }
 
+const HELIUS_KEY = process.env.HELIUS_API_KEY ?? "8292769f-aeb2-471c-af1d-fb98576972e4";
+
+/** Has this wallet SOLD the given token recently? (Wallets don't lie.) Checks
+ *  Helius parsed SWAPs for a transfer of `mint` OUT of the wallet. */
+async function walletSoldToken(wallet: string, mint: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://api.helius.xyz/v0/addresses/${wallet}/transactions?api-key=${HELIUS_KEY}&type=SWAP&limit=15`,
+      { cache: "no-store", signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return false;
+    const txs = (await res.json()) as { tokenTransfers?: { fromUserAccount?: string; mint?: string }[] }[];
+    return (txs ?? []).some((tx) =>
+      (tx.tokenTransfers ?? []).some((t) => t.fromUserAccount === wallet && t.mint === mint)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Fetch + normalize LunarCrush topic posts for a symbol/topic. */
 async function fetchLunar(topic: string, apiKey: string): Promise<RawPost[] | null> {
   try {
@@ -182,19 +202,26 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Attach each surfaced poster's track record + resolved wallet (best-effort).
+    // Attach each surfaced poster's track record + resolved wallet, and — if
+    // they pasted a wallet and this is a CA — cross-check whether that wallet
+    // is SELLING the very token they're posting about. Wallets don't lie.
     const enrichedHuman = await Promise.all(
-      human.slice(0, 12).map(async (p) => ({
-        author: p.author,
-        followers: p.followers,
-        text: p.text,
-        createdAt: p.createdAt,
-        url: p.url,
-        earlyScore: p.earlyScore,
-        hasThesis: p.hasThesis,
-        wallet: extractWallet(p.text),
-        track: isCa ? await kolStats(p.author) : null,
-      }))
+      human.slice(0, 12).map(async (p) => {
+        const wallet = extractWallet(p.text);
+        const sellingWhatTheyShill = wallet && isCa ? await walletSoldToken(wallet, query) : false;
+        return {
+          author: p.author,
+          followers: p.followers,
+          text: p.text,
+          createdAt: p.createdAt,
+          url: p.url,
+          earlyScore: p.earlyScore,
+          hasThesis: p.hasThesis,
+          wallet,
+          sellingWhatTheyShill,
+          track: isCa ? await kolStats(p.author) : null,
+        };
+      })
     );
 
     return NextResponse.json({

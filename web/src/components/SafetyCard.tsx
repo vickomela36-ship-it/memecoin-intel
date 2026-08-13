@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { SafetyReport, SafetyVerdict } from "@/types";
 import { timeAgo } from "@/lib/utils";
 import ClusterGraph from "./ClusterGraph";
+import Term from "./Term";
 
 const V_COLOR: Record<SafetyVerdict, string> = {
   pass: "var(--signal-long)",
@@ -151,7 +152,7 @@ export default function SafetyCard({
           {report.botted.length > 1 && (
             <details className="rounded-input" style={{ background: "var(--bg-elevated)" }}>
               <summary className="px-3 py-1.5 cursor-pointer text-sm" style={{ color: "var(--signal-short)" }}>
-                ⚠ {report.botted.length} manufactured-chart patterns detected
+                ⚠ {report.botted.length} <Term k="market maker">manufactured-chart</Term> patterns detected
               </summary>
               <ul className="px-3 pb-2 text-xs space-y-1">
                 {report.botted.map((b) => (
@@ -207,7 +208,9 @@ export default function SafetyCard({
                   </tbody>
                 </table>
                 <div className="text-xs text-[var(--text-tertiary)] mt-1">
-                  LP pool rows are the liquidity, not a trader. Insider = bundler/insider-tagged by Rugcheck. Run DEEP SCAN below to trace which of these were funded by the same wallet.
+                  <Term k="lp">LP</Term> pool rows are the liquidity, not a trader.
+                  Insider = <Term k="bundling">bundler</Term>/insider-tagged by Rugcheck.
+                  Run DEEP SCAN below to trace which of these were funded by the same wallet.
                 </div>
               </div>
             </details>
