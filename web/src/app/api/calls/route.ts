@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { kv, kvConfigured } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -9,25 +10,7 @@ export const maxDuration = 30;
 // { ca, caller, source } (optionally a shared secret) and every call is
 // auto-enriched with its market cap at call time. First-caller wins attribution.
 
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 const INGEST_SECRET = process.env.CALLS_INGEST_SECRET; // optional webhook guard
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -96,7 +79,7 @@ function statOf(r: CallRecord): CallStat {
 // POST — ingest a call. Webhook or manual. First caller is recorded once;
 // later hits only update peak/last market cap.
 export async function POST(req: NextRequest) {
-  if (!KV_URL) return NextResponse.json({ error: "kv not configured" }, { status: 503 });
+  if (!kvConfigured()) return NextResponse.json({ error: "storage not configured" }, { status: 503 });
   let body: { ca?: string; caller?: string; source?: string; secret?: string } = {};
   try { body = await req.json(); } catch { /* empty */ }
 
@@ -135,7 +118,7 @@ export async function POST(req: NextRequest) {
 
 // GET — the call ledger, refreshed. Optionally refresh market caps on read.
 export async function GET() {
-  if (!KV_URL) return NextResponse.json({ error: "kv not configured", calls: [] }, { status: 200 });
+  if (!kvConfigured()) return NextResponse.json({ error: "storage not configured", calls: [] }, { status: 200 });
   try {
     const members = ((await kv(["SMEMBERS", "mi:calls:index"])) as string[] | null) ?? [];
     const stats: CallStat[] = [];

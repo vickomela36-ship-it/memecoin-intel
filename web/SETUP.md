@@ -10,41 +10,41 @@ redeploy.
 
 ---
 
-## 1. Persistence — Vercel KV (Upstash Redis)  ← you asked to set this up
+## 1. Persistence — Postgres (Neon free tier)  ← you asked to set this up
 
 Powers: the **call ledger** (first-caller attribution), **KOL track-record**,
 **creator balance + cluster tracking**, the **trenches heat gauge**, and
 **cross-device sync**.
 
-Vercel no longer has a built-in "KV" — it's now provided through the
-**Upstash** marketplace entry (serverless Redis with a REST API, which is what
-this app talks to).
+The app uses a tiny key/value layer (`src/lib/kv.ts`) over Postgres via Neon's
+serverless driver. Tables are created automatically on first use — no
+migration to run. Neon's free tier is generous and permanent.
 
 Steps:
 
-1. In the Vercel dashboard, open your project → **Storage → Create Database**.
-2. Under **Marketplace Database Providers**, pick **Upstash**
-   (*Serverless DB — Redis, Vector, Queue, Search*).
-   - **Do NOT** pick "Redis — Official Redis for Vercel"; that's a raw
-     `redis://` connection, not the REST API this app uses.
-3. Choose **Redis**, the free tier, and a region near your function region.
-4. **Connect** it to this project and select the environments
-   (Production/Preview/Development) you want.
-5. Vercel/Upstash auto-injects the REST credentials. The app accepts **either**
-   naming, so whichever pair it creates will work:
+1. Go to **neon.tech** → sign up (free; GitHub login works).
+2. **Create a project** (any name), pick a region near your Vercel functions.
+3. On the project dashboard, copy the **connection string** (looks like
+   `postgresql://user:pass@ep-xxx.region.aws.neon.tech/neondb?sslmode=require`).
+   Use the **pooled** connection string if offered.
+4. In **Vercel → your project → Settings → Environment Variables**, add:
 
    ```
-   KV_REST_API_URL          / KV_REST_API_TOKEN
-     — or —
-   UPSTASH_REDIS_REST_URL   / UPSTASH_REDIS_REST_TOKEN
+   DATABASE_URL = <your Neon connection string>
    ```
 
-   You don't need to rename anything.
-6. **Redeploy.** Open **? → STATUS**; "Persistence (Vercel KV)" should read
+   scoped to **Production + Preview**. (The app also accepts `POSTGRES_URL` /
+   `POSTGRES_PRISMA_URL` / `POSTGRES_URL_NON_POOLING`, so Neon's official
+   **Vercel integration** — which injects those automatically — also works if
+   you prefer connecting it that way.)
+5. **Redeploy.** Open **? → STATUS**; "Persistence (Postgres)" should read
    **● LIVE**.
 
-Nothing else changes — the ledger routes detect the vars and start persisting.
-Without them those routes return empty/dormant and never error.
+Nothing else changes — the ledger routes detect the connection and start
+persisting. Without it those routes return empty/dormant and never error.
+
+*Supabase works too:* create a project, copy the **Connection Pooling** string
+(port 6543) from Project Settings → Database, and set it as `DATABASE_URL`.
 
 ---
 

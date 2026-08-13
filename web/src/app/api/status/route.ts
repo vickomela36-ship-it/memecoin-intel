@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { kvConfigured } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 
@@ -7,10 +8,7 @@ export const dynamic = "force-dynamic";
 // in-app status panel so you can see what's live vs dormant.
 
 export async function GET() {
-  const kv = !!(
-    (process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL) &&
-    (process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN)
-  );
+  const kv = kvConfigured();
   const lunar = !!process.env.LUNARCRUSH_API_KEY;
   const xreach = !!process.env.XREACH_URL;
   const helius = !!process.env.HELIUS_API_KEY;
@@ -19,7 +17,7 @@ export async function GET() {
 
   return NextResponse.json({
     features: [
-      { key: "kv", label: "Persistence (Vercel KV)", live: kv,
+      { key: "kv", label: "Persistence (Postgres)", live: kv,
         powers: "Call ledger, KOL track-record, creator balance/cluster tracking, trenches heat gauge, cross-device sync" },
       { key: "social", label: "Social signal", live: lunar || xreach,
         powers: "Bot filtering, early-poster ranking, KOL ledger, coordinated-KOL",

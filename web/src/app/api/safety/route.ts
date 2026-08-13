@@ -14,6 +14,7 @@ import {
   type OHLCV,
 } from "@/modules/memecoin/detectors";
 import { analyzeChart } from "@/lib/ta";
+import { kv } from "@/lib/kv";
 import type { ChartInfo } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -24,28 +25,9 @@ const HELIUS_KEY =
 const BIRDEYE_KEY =
   process.env.BIRDEYE_API_KEY ?? "dac9521a4c004f65897b2bd3e52cf10d";
 
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-
 function num(v: unknown): number {
   const n = Number(v);
   return isFinite(n) ? n : 0;
-}
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** fetch with one 429/5xx backoff — the providers are the rate-limit cost. */

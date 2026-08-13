@@ -1,30 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { kv, kvConfigured } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // Creator ledger — a shared, persistent record of deployer wallets and how
 // their tokens perform. Built up over time from tokens the scanner surfaces.
-// Stored in KV so it accumulates across all sessions and devices.
-
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
-}
+// Stored in Postgres (see lib/kv) so it accumulates across sessions and devices.
 
 interface TokenRecord {
   mint: string;
@@ -148,7 +130,7 @@ async function resolveCreator(mint: string): Promise<string | null> {
 // POST: ingest tokens {mint, symbol, mcap}[] — resolve creators, upsert
 // records, update peak mcaps. Called by the scanner enrichment step.
 export async function POST(req: NextRequest) {
-  if (!KV_URL) return NextResponse.json({ error: "kv not configured" }, { status: 503 });
+  if (!kvConfigured()) return NextResponse.json({ error: "storage not configured" }, { status: 503 });
   try {
     const body = await req.json();
     const tokens: { mint: string; symbol: string; mcap: number }[] = (body?.tokens ?? []).slice(0, 12);
@@ -189,7 +171,7 @@ export async function POST(req: NextRequest) {
 
 // GET: leaderboard of tracked creators, or ?creator=addr for one record.
 export async function GET(req: NextRequest) {
-  if (!KV_URL) return NextResponse.json({ error: "kv not configured", creators: [] }, { status: 200 });
+  if (!kvConfigured()) return NextResponse.json({ error: "storage not configured", creators: [] }, { status: 200 });
   const single = new URL(req.url).searchParams.get("creator");
   try {
     if (single) {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { kv, kvConfigured } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -10,24 +11,6 @@ export const maxDuration = 30;
 // measured from accumulated history, not fabricated. Empty until the ledger
 // has data.
 
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
-}
 
 interface TokenRecord {
   firstSeenMcap: number;
@@ -43,7 +26,7 @@ function median(xs: number[]): number {
 }
 
 export async function GET() {
-  if (!KV_URL) return NextResponse.json({ available: false });
+  if (!kvConfigured()) return NextResponse.json({ available: false });
   try {
     const members = ((await kv(["SMEMBERS", "mi:creators:index"])) as string[] | null) ?? [];
     const now = Date.now();

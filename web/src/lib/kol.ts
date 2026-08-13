@@ -2,26 +2,9 @@
 // about — market cap at post time and how it did since. This lets the tool
 // answer "is this person actually right, or do they post near local tops with
 // no reasoning?" over time. Data only ever comes from the configured social
-// worker; nothing is fabricated. Dormant (no-ops) when KV is unset.
+// worker; nothing is fabricated. Dormant (no-ops) when storage is unset.
 
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try {
-    const res = await fetch(KV_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KV_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-      cache: "no-store",
-    });
-    const data = await res.json();
-    return data?.result ?? null;
-  } catch {
-    return null;
-  }
-}
+import { kv, kvConfigured } from "@/lib/kv";
 
 interface KolCall {
   ca: string;
@@ -62,7 +45,7 @@ export async function ingestKolPosts(
   mcap: number,
   posters: { handle: string; hadThesis: boolean }[]
 ): Promise<void> {
-  if (!KV_URL || mcap <= 0) return;
+  if (!kvConfigured() || mcap <= 0) return;
   const now = Date.now();
   // De-dupe posters by handle within this ingest.
   const seen = new Set<string>();

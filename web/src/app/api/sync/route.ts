@@ -1,25 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { kv, kvConfigured } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
-
-// Upstash/Vercel KV REST — single-command endpoint.
-const KV_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-
-async function kv(cmd: (string | number)[]): Promise<unknown> {
-  const res = await fetch(KV_URL!, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${KV_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(cmd),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`KV ${res.status}`);
-  const data = await res.json();
-  return data?.result ?? null;
-}
 
 // Sync IDs are client-generated 128-bit+ random strings. The ID is the
 // only credential — without it, keys are unguessable. Single-user tool.
@@ -27,8 +9,8 @@ const ID_RE = /^[A-Za-z0-9-]{20,80}$/;
 const MAX_BYTES = 400_000;
 
 export async function GET(req: NextRequest) {
-  if (!KV_URL || !KV_TOKEN) {
-    return NextResponse.json({ error: "kv not configured" }, { status: 503 });
+  if (!kvConfigured()) {
+    return NextResponse.json({ error: "storage not configured" }, { status: 503 });
   }
   const id = new URL(req.url).searchParams.get("id");
   if (!id || !ID_RE.test(id)) {
@@ -43,8 +25,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!KV_URL || !KV_TOKEN) {
-    return NextResponse.json({ error: "kv not configured" }, { status: 503 });
+  if (!kvConfigured()) {
+    return NextResponse.json({ error: "storage not configured" }, { status: 503 });
   }
   try {
     const body = await req.json();
