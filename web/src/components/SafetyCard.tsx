@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { SafetyReport, SafetyVerdict } from "@/types";
 import { timeAgo } from "@/lib/utils";
+import ClusterGraph from "./ClusterGraph";
 
 const V_COLOR: Record<SafetyVerdict, string> = {
   pass: "var(--signal-long)",
@@ -243,15 +244,31 @@ export default function SafetyCard({
           {report.deep?.ran ? (
             <div className="rounded-input px-3 py-2 text-xs" style={{ background: "var(--bg-elevated)" }}>
               <b className="text-[var(--text-secondary)]">Deep scan:</b> {report.deep.note}
+              {report.deep.clusterTrend && (
+                <div
+                  className="mt-1 font-mono-display"
+                  style={{ color: report.deep.clusterTrend.startsWith("⚠") ? "var(--signal-short)" : "var(--text-secondary)" }}
+                >
+                  {report.deep.clusterTrend}
+                </div>
+              )}
               {report.deep.fundingClusters.length > 0 && (
-                <ul className="mt-1 space-y-0.5">
-                  {report.deep.fundingClusters.map((c, i) => (
-                    <li key={i} style={{ color: "var(--signal-short)" }}>
-                      ⚠ {c.holders} holders funded from {c.origin}
-                      {c.withinHours !== null && ` within ${c.withinHours}h`} (~{c.pctOfSupply}% supply)
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ul className="mt-1 space-y-0.5">
+                    {report.deep.fundingClusters.map((c, i) => (
+                      <li key={i} style={{ color: "var(--signal-short)" }}>
+                        ⚠ {c.holders} holders funded from {c.origin}
+                        {c.withinHours !== null && ` within ${c.withinHours}h`} (~{c.pctOfSupply}% supply)
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2">
+                    <ClusterGraph clusters={report.deep.fundingClusters} />
+                    <div className="text-[10px] text-[var(--text-tertiary)]">
+                      Each hub is a funding origin; orbiting dots are the wallets it funded. Hub size = combined % of supply — one funder, many wallets, one entity.
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           ) : onDeepScan ? (

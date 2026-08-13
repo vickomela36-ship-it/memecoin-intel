@@ -265,6 +265,7 @@ export interface SafetyReport {
     address: string | null;
     status: "accumulating" | "holding" | "distributing" | "unknown";
     note: string;
+    balancePct: number | null; // creator's current holding as % of supply, if measured
   };
   deep: {
     ran: boolean;
@@ -272,6 +273,7 @@ export interface SafetyReport {
     topSampled: number;
     fundingClusters: FundingCluster[];
     note: string;
+    clusterTrend: string | null; // measured change in cluster supply since last scan
   } | null;
   sources: string[]; // which providers answered
 }
