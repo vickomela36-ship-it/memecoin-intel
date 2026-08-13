@@ -8,6 +8,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "memecoin", label: "SCANNER" },
   { id: "confluence", label: "CONFLUENCE" },
   { id: "creators", label: "CREATORS" },
+  { id: "calls", label: "CALLS" },
   { id: "intel", label: "SAFETY" },
   { id: "positions", label: "POSITIONS" },
   { id: "portfolio", label: "PORTFOLIO" },

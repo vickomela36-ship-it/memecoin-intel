@@ -30,6 +30,7 @@ function PanelSkeleton() {
 const ConfluenceView = dynamic(() => import("@/components/views/ConfluenceView"), { loading: PanelSkeleton, ssr: false });
 const IntelView = dynamic(() => import("@/components/views/IntelView"), { loading: PanelSkeleton, ssr: false });
 const CreatorsView = dynamic(() => import("@/components/views/CreatorsView"), { loading: PanelSkeleton, ssr: false });
+const CallsView = dynamic(() => import("@/components/views/CallsView"), { loading: PanelSkeleton, ssr: false });
 const PositionsView = dynamic(() => import("@/components/views/PositionsView"), { loading: PanelSkeleton, ssr: false });
 const PortfolioView = dynamic(() => import("@/components/views/PortfolioView"), { loading: PanelSkeleton, ssr: false });
 const ChallengeView = dynamic(() => import("@/components/views/ChallengeView"), { loading: PanelSkeleton, ssr: false });
@@ -115,6 +116,7 @@ export default function Home() {
         {tab === "confluence" && <ConfluenceView />}
         {tab === "intel" && <IntelView />}
         {tab === "creators" && <CreatorsView />}
+        {tab === "calls" && <CallsView />}
         {tab === "positions" && <PositionsView />}
         {tab === "challenge" && <ChallengeView />}
         {tab === "portfolio" && <PortfolioView />}
