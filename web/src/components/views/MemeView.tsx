@@ -83,6 +83,37 @@ export default function MemeView({
     [hot, trending, sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
   );
 
+  // Top pick per upside tier — highest CONVICTION SCORE within each tier, not a
+  // prediction the token reaches the target. Higher tiers = higher risk.
+  const highlights = useMemo(() => {
+    const best = (arr: MemeSignal[]) =>
+      arr.length ? arr.slice().sort((a, b) => b.score - a.score)[0] : null;
+    const byTier = (t: string) => best(all.filter((s) => s.tier === t));
+    return [
+      { mult: "2x", anchor: "sec-sure", pick: best(sure2x) ?? byTier("3x POSSIBLE"), note: "Established, deep liquidity, buyers in control" },
+      { mult: "3x", anchor: "sec-recovery", pick: best(recovery3x) ?? byTier("5x POTENTIAL"), note: "Deep-dip reversal, volume returning" },
+      { mult: "5x", anchor: "sec-momentum", pick: byTier("5x POTENTIAL"), note: "Momentum/volume with headroom" },
+      { mult: "10x", anchor: "sec-hot", pick: byTier("10x RUNNER"), note: "Fresh, small-cap, real attention" },
+      { mult: "100x", anchor: "sec-degen", pick: byTier("100x MOONSHOT"), note: "Lottery tier — most go to zero" },
+    ];
+  }, [all, sure2x, recovery3x]);
+
+  const navItems = [
+    { id: "sec-hot", label: "HOT", n: hot.length },
+    { id: "sec-trending", label: "TRENDING", n: trending.length },
+    { id: "sec-sure", label: "2X", n: sure2x.length },
+    { id: "sec-recovery", label: "3X", n: recovery3x.length },
+    { id: "sec-momentum", label: "MOMENTUM", n: momentum.length },
+    { id: "sec-volume", label: "VOLUME", n: volumePlays.length },
+    { id: "sec-highcap", label: "HIGH-CAP", n: higherCap.length },
+    { id: "sec-pump", label: "PUMP", n: pumpfun.length },
+    { id: "sec-launch", label: "LAUNCH", n: launches.length },
+    { id: "sec-degen", label: "DEGEN", n: degens.length },
+  ].filter((x) => x.n > 0);
+
+  const jump = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
   useEffect(() => {
     onStatus(all.length > 0);
   }, [all, onStatus]);
@@ -225,6 +256,68 @@ export default function MemeView({
         <RegimeBanner breadthPct={pulse.greenPct} medianH24={pulse.medianH24} />
       )}
 
+      {/* ── HIGHLIGHTS — top pick per upside tier + jump nav ─────────── */}
+      {all.length > 0 && (
+        <>
+          <div className="card">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+              <h2 className="font-display text-lg font-semibold">HIGHLIGHTS</h2>
+              <span className="text-xs text-[var(--text-tertiary)]">top pick per upside tier</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {highlights.map((h) => {
+                const clr =
+                  h.mult === "100x" ? "var(--signal-edge)"
+                    : h.mult === "5x" || h.mult === "10x" ? "var(--signal-neutral)"
+                      : "var(--signal-long)";
+                return (
+                  <div key={h.mult} className="rounded-input p-2" style={{ background: "var(--bg-elevated)", border: `1px solid ${clr}33` }}>
+                    <div className="font-display font-bold text-lg" style={{ color: clr }}>{h.mult}</div>
+                    {h.pick ? (
+                      <>
+                        <button onClick={() => jump(h.anchor)} className="font-mono-display text-sm hover:underline block truncate w-full text-left">
+                          ${h.pick.symbol}
+                        </button>
+                        <div className="text-xs text-[var(--text-tertiary)] font-mono-display">
+                          score {h.pick.score} · {fmtUsd(h.pick.fdv)}
+                        </div>
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent("mi:goto-safety", { detail: h.pick!.address }))}
+                          className="text-xs text-[var(--signal-edge)] hover:underline mt-0.5"
+                        >
+                          safety ↗
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-xs text-[var(--text-tertiary)] mt-1">no pick right now</div>
+                    )}
+                    <div className="text-[10px] text-[var(--text-tertiary)] mt-1 leading-tight">{h.note}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-[var(--text-tertiary)] mt-2">
+              Ranked by our conviction score within each tier — NOT a prediction that a token reaches
+              the target. Higher tiers carry higher risk. Not financial advice.
+            </div>
+          </div>
+
+          {navItems.length > 1 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {navItems.map((it) => (
+                <button
+                  key={it.id}
+                  onClick={() => jump(it.id)}
+                  className="whitespace-nowrap font-mono-display text-xs px-2.5 py-1 rounded-btn border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border-active)] hover:text-[var(--text-primary)]"
+                >
+                  {it.label} <span className="text-[var(--text-tertiary)]">{it.n}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       {/* ── META OF THE DAY — which narrative is running ─────────────── */}
       {metas.length > 0 && (
         <div className="card">
@@ -319,60 +412,70 @@ export default function MemeView({
       )}
 
       <Section
+        anchor="sec-hot"
         title={`🔥 HOT — SNIPER FILTER (${hot.length})`}
         caption="The @web3_blizz recipe: <72h old, $10K+ liquidity, $200K–$1M mcap sweet spot, real attention, buyers in control — rugcheck-gated. The 20–40x hunting grounds. Size like moonshots."
         signals={hot}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-trending"
         title={`TRENDING NOW (${trending.length})`}
         caption="Raw attention across the whole scan, now VALIDATED: each token is graded LIKELY SEND / POSSIBLE / CHASING RISK on continuation signals, with a projected upside. The crowd is here — that cuts both ways."
         signals={trending}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-sure"
         title={`SURE PLAYS — 2x GRINDERS (${sure2x.length})`}
         caption="Highest-probability tier: established tokens, deep liquidity, buyers in control, bounce confirmed. Biggest size, smallest target — take the 1.5-2x and leave."
         signals={sure2x}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-recovery"
         title={`3x RECOVERY PLAYS (${recovery3x.length})`}
         caption="Deep-dip low-caps (-30% or worse) showing volume resurgence and reversal structure."
         signals={recovery3x}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-momentum"
         title={`MOMENTUM RIDERS (${momentum.length})`}
         caption="Already running with volume accelerating. Freshness-scored — chasing extended moves is penalized."
         signals={momentum}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-volume"
         title={`VOLUME PLAYS (${volumePlays.length})`}
         caption="Outsized turnover vs market cap with volume still building. Where the crowd concentrates, moves follow — confirm direction on the 5m first."
         signals={volumePlays}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-highcap"
         title={`HIGHER-CAP RECOVERY — $5M+ (${higherCap.length})`}
         caption="Established tokens dipping with buy-side sentiment intact. Core-play material."
         signals={higherCap}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-pump"
         title={`PUMP.FUN RELEASES (${pumpfun.length})`}
         caption="Fresh pump.fun tokens (<48h) with buyers in control and momentum — rugcheck DANGER tokens are filtered out of this section entirely."
         signals={pumpfun}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-launch"
         title={`NEW LAUNCHES (${launches.length})`}
         caption="Under 24h old with real liquidity and buy pressure. Earliest entries, thinnest data."
         signals={launches}
         fetchedAt={fetchedAt}
       />
       <Section
+        anchor="sec-degen"
         title={`DEGEN MOONSHOTS (${degens.length})`}
         caption="5x / 10x / 100x POTENTIAL tiers. Rugchecked where possible. Only bet what you can lose — most go to zero."
         signals={degens}
@@ -428,16 +531,18 @@ function Section({
   caption,
   signals,
   fetchedAt,
+  anchor,
 }: {
   title: string;
   caption: string;
   signals: MemeSignal[];
   fetchedAt: number;
+  anchor?: string;
 }) {
   if (!signals.length) return null;
   return (
     <>
-      <div className="mt-2">
+      <div className="mt-2 scroll-mt-28" id={anchor}>
         <h2 className="font-display text-lg font-semibold">{title}</h2>
         <p className="text-xs text-[var(--text-tertiary)]">{caption}</p>
       </div>
