@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import SignalStrip from "@/components/SignalStrip";
 import TabNav from "@/components/TabNav";
-import TrackRecord from "@/components/TrackRecord";
 import Settings, {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -34,6 +33,8 @@ const CallsView = dynamic(() => import("@/components/views/CallsView"), { loadin
 const PositionsView = dynamic(() => import("@/components/views/PositionsView"), { loading: PanelSkeleton, ssr: false });
 const PortfolioView = dynamic(() => import("@/components/views/PortfolioView"), { loading: PanelSkeleton, ssr: false });
 const ChallengeView = dynamic(() => import("@/components/views/ChallengeView"), { loading: PanelSkeleton, ssr: false });
+// Bottom accuracy panel — not first-paint-critical, defer it.
+const TrackRecord = dynamic(() => import("@/components/TrackRecord"), { ssr: false });
 const Education = dynamic(() => import("@/components/Education"), { ssr: false });
 const WatchSafetyPopup = dynamic(() => import("@/components/WatchSafetyPopup"), { ssr: false });
 
