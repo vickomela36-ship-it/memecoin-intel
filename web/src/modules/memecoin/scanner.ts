@@ -168,7 +168,7 @@ async function annotateRugcheck(
     if (seen.has(s.address)) return false;
     seen.add(s.address);
     return true;
-  }).slice(0, 14);
+  }).slice(0, 18);
 
   await Promise.allSettled(
     targets.map(async (s) => {
@@ -537,15 +537,19 @@ export async function runMemeScan(
     degens: degens.slice(0, 10),
   };
 
-  // Rugcheck: HOT + pumpfun + launches get the security gate (DANGER
-  // tokens REMOVED — the guide's rule: rugcheck before you ape), trending
-  // + degens get flagged but stay visible.
+  // Rugcheck: HOT + pumpfun + launches + ATH-reclaim get the security gate
+  // (DANGER tokens REMOVED — the guide's rule: rugcheck before you ape),
+  // trending + degens get flagged but stay visible. ATH-reclaim is placed FIRST
+  // so its picks are always within the check budget — this substantiates the
+  // tier's "rug-free" framing (surviving picks are tagged "no major risks
+  // flagged"; the full holder/authority + ATH/fib confirmation is in Safety).
   const dangers = await annotateRugcheck(
-    [...result.hot, ...result.pumpfun, ...result.launches, ...result.trending, ...result.degens],
+    [...result.athReclaim, ...result.hot, ...result.pumpfun, ...result.launches, ...result.trending, ...result.degens],
     opts.server ?? false
   );
   result.pumpfun = result.pumpfun.filter((s) => !dangers.has(s.address));
   result.hot = result.hot.filter((s) => !dangers.has(s.address));
+  result.athReclaim = result.athReclaim.filter((s) => !dangers.has(s.address));
 
   return result;
 }
