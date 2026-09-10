@@ -2,10 +2,14 @@
 
 import { useEffect, useMemo } from "react";
 import useSWR from "swr";
+import dynamic from "next/dynamic";
 import SignalCard from "@/components/SignalCard";
 import RegimeBanner from "@/components/RegimeBanner";
-import WhaleWatch from "@/components/WhaleWatch";
 import AccuracyBadge from "@/components/AccuracyBadge";
+
+// WhaleWatch is a secondary insider layer that fetches its own data — defer it
+// out of the scanner's first-paint bundle; it renders once signals exist.
+const WhaleWatch = dynamic(() => import("@/components/WhaleWatch"), { ssr: false });
 import { fetchTokenPrice } from "@/modules/memecoin/fetchers";
 import { instantSentiment } from "@/lib/sentiment";
 import { logSignal, pendingLogs, resolveLog } from "@/lib/accuracy-tracker";
