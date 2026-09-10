@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { jsonFetcher } from "@/lib/utils";
-import type { MemeScanResult } from "@/types";
 
 type Category = "PROVEN" | "SERIAL" | "ONE-HIT" | "RUG-PRONE" | "COOKING" | "NEW";
 
@@ -43,36 +42,15 @@ export default function CreatorsView() {
   const [creators, setCreators] = useState<CreatorStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [kvOff, setKvOff] = useState(false);
-  const [ingested, setIngested] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // 1) Feed the ledger from the current scan (launches + pumpfun)
-      try {
-        const scan = await jsonFetcher<MemeScanResult>("/api/scan");
-        const tokens = [...(scan.launches ?? []), ...(scan.pumpfun ?? [])].map((s) => ({
-          mint: s.address, symbol: s.symbol, mcap: s.fdv,
-        }));
-        if (tokens.length) {
-          const res = await fetch("/api/creators", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tokens }),
-          });
-          if (res.status === 503) setKvOff(true);
-          else {
-            const d = await res.json();
-            setIngested(d?.ingested ?? 0);
-          }
-        }
-      } catch {
-        /* ingest best-effort */
-      }
-      // 2) Read the leaderboard
+      // The shared scan now ingests creators server-side every cycle, so we
+      // just read the leaderboard here.
       const data = await jsonFetcher<{ creators: CreatorStats[]; error?: string }>("/api/creators");
       setCreators(data.creators ?? []);
-      if (data.error === "kv not configured") setKvOff(true);
+      if (data.error === "storage not configured") setKvOff(true);
     } finally {
       setLoading(false);
     }
@@ -103,7 +81,6 @@ export default function CreatorsView() {
       <div className="card flex items-center justify-between flex-wrap gap-2">
         <span className="font-mono-display text-sm text-[var(--text-secondary)]">
           {creators.length} tracked creators
-          {ingested !== null && ingested > 0 && ` · +${ingested} new this visit`}
         </span>
         <button
           onClick={load}
