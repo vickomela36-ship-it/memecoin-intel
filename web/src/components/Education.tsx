@@ -4,14 +4,16 @@ import { useEffect, useState } from "react";
 import { GLOSSARY } from "@/lib/glossary";
 
 interface FeatureStatus { key: string; label: string; live: boolean; powers: string; detail?: string }
+interface Build { commit: string; branch: string }
 
 /** Shows which env-backed features are live vs dormant on this deployment. */
 function StatusTab() {
   const [features, setFeatures] = useState<FeatureStatus[] | null>(null);
+  const [build, setBuild] = useState<Build | null>(null);
   useEffect(() => {
     fetch("/api/status")
       .then((r) => r.json())
-      .then((d) => setFeatures(d.features ?? []))
+      .then((d) => { setFeatures(d.features ?? []); setBuild(d.build ?? null); })
       .catch(() => setFeatures([]));
   }, []);
 
@@ -19,6 +21,14 @@ function StatusTab() {
 
   return (
     <div className="space-y-2">
+      {build && (
+        <div className="rounded-input px-3 py-2 flex items-center justify-between" style={{ background: "var(--bg-elevated)" }}>
+          <span className="text-xs text-[var(--text-secondary)]">Deployed build</span>
+          <span className="font-mono-display text-xs text-[var(--signal-edge)]">
+            {build.commit}{build.branch ? ` · ${build.branch}` : ""}
+          </span>
+        </div>
+      )}
       <div className="text-sm text-[var(--text-secondary)]">
         What&apos;s connected on this deployment. Dormant features work the moment
         their key is set — see <code>SETUP.md</code> in the repo.
