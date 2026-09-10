@@ -24,7 +24,6 @@ import {
 } from "@/lib/discipline";
 import { logTrade } from "@/lib/storage";
 import { fetchPrices, jsonFetcher, timeAgo } from "@/lib/utils";
-import type { SafetyReport } from "@/types";
 
 const COIN_TYPES: CoinType[] = ["meme", "utility", "ownership"];
 const CONVICTIONS: Conviction[] = ["LOW", "MEDIUM", "HIGH"];
@@ -91,13 +90,9 @@ export default function PositionsView() {
       .map((p) => p.address);
     for (const addr of Array.from(new Set(addrs))) {
       try {
-        const r = await jsonFetcher<SafetyReport>(`/api/safety?mint=${addr}`);
-        const events: string[] = [];
-        if (r.creator?.status === "distributing") events.push("The creator wallet is distributing (selling).");
-        if (r.chart?.structure?.state === "DOWNTREND") events.push("Market structure just broke down to a downtrend.");
-        if (r.collision?.vampRisk) events.push("A vamp risk appeared — a better-named competitor is threatening the narrative.");
-        if (r.deep?.clusterTrend && r.deep.clusterTrend.startsWith("⚠")) events.push("A funding cluster is reducing (coordinated selling).");
-        setIntel((prev) => ({ ...prev, [addr]: events }));
+        // Slim endpoint: only the four cross-feed booleans, not the full report.
+        const r = await jsonFetcher<{ events: string[] }>(`/api/position-intel?mint=${addr}`);
+        setIntel((prev) => ({ ...prev, [addr]: r.events ?? [] }));
       } catch {
         /* leave prior intel in place */
       }
