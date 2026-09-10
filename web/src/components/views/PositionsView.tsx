@@ -106,7 +106,10 @@ export default function PositionsView() {
 
   useEffect(() => {
     refreshIntel();
-    const id = setInterval(refreshIntel, 300_000);
+    // Cross-feed intel (creator/structure/vamp/cluster) doesn't invalidate on a
+    // 5-min scale — it pulls a full safety report per open position, so a 15-min
+    // cadence cuts those provider-heavy fetches to a third with no signal loss.
+    const id = setInterval(refreshIntel, 900_000);
     return () => clearInterval(id);
   }, [refreshIntel]);
 
