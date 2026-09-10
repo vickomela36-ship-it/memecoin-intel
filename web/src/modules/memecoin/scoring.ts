@@ -401,6 +401,82 @@ export function scoreVolume(
 }
 
 
+export const ATH_RECLAIM_MIN = 62;
+
+/**
+ * "ATH RECLAIM" — established memecoins with proven liquidity depth that have
+ * pulled back from recent highs into a retracement zone, with buyers returning:
+ * a dip-buy on a survivor with room to retest/reclaim its former high. Deep
+ * liquidity + age are the rug-avoidance proxy the free API allows; the true
+ * holder/authority check and the precise fib retracement live in the Safety
+ * tab (which fetches OHLCV). Drawdown is from recent highs, not literal ATH.
+ */
+export function scoreAthReclaim(
+  pair: DexPair,
+  ageHours: number
+): { score: number; components: ScoreComponent[]; reasons: string[]; warnings: string[] } {
+  const m5 = num(pair.priceChange?.m5);
+  const h1 = num(pair.priceChange?.h1);
+  const h6 = num(pair.priceChange?.h6);
+  const h24 = num(pair.priceChange?.h24);
+  const liq = num(pair.liquidity?.usd);
+  const fdv = num(pair.fdv);
+  const ratio = buySellRatio(pair);
+  const days = ageHours / 24;
+  const worst = Math.min(h6, h24); // deepest recent pullback (negative)
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  const components: ScoreComponent[] = [];
+
+  // Established track record (25) — age + cap. Survivors, not fresh launches.
+  let estScore: number;
+  if (days > 60 || fdv >= 20_000_000) estScore = 100;
+  else if (days > 30 || fdv >= 5_000_000) estScore = 85;
+  else if (days > 21) estScore = 70;
+  else estScore = 45;
+  if (days > 30) reasons.push(`Established: ${days.toFixed(0)}d old, ~$${(fdv / 1_000_000).toFixed(1)}M cap`);
+  components.push({ name: "Established (age + cap)", weightPct: 25, score: estScore, detail: `${days.toFixed(0)}d · $${(fdv / 1_000_000).toFixed(1)}M` });
+
+  // Proven liquidity depth (30) — the load-bearing pillar for this tier.
+  let liqScore: number;
+  if (liq >= 500_000) liqScore = 100;
+  else if (liq >= 250_000) liqScore = 90;
+  else if (liq >= 100_000) liqScore = 75;
+  else liqScore = 35;
+  if (liq >= 250_000) reasons.push(`Deep liquidity $${(liq / 1000).toFixed(0)}K — clean size in and out`);
+  components.push({ name: "Liquidity depth", weightPct: 30, score: liqScore, detail: `$${(liq / 1000).toFixed(0)}K` });
+
+  // Retracement quality (25) — prime dip-buy zone is a real pullback that isn't
+  // a falling knife. −20%..−40% is the sweet spot.
+  let retScore: number;
+  if (worst <= -20 && worst >= -40) retScore = 100;
+  else if (worst < -40 && worst >= -55) retScore = 70;
+  else if (worst <= -12 && worst > -20) retScore = 65;
+  else if (worst < -55) retScore = 30;
+  else retScore = 35;
+  if (worst <= -12) reasons.push(`Pulled back ${worst.toFixed(0)}% from recent highs — retracement entry zone`);
+  components.push({ name: "Retracement depth", weightPct: 25, score: retScore, detail: `${worst.toFixed(0)}% (worst 6h/24h)` });
+
+  // Reclaim structure (20) — buyers stepping back in at the dip.
+  let reclaim: number;
+  if (m5 > 0 && h1 > 0 && h24 < 0) {
+    reclaim = 95;
+    reasons.push(`Reclaim forming: 5m +${m5.toFixed(1)}% / 1h +${h1.toFixed(1)}% against a red 24h`);
+  } else if (h1 > 0 && h24 < 0) reclaim = 70;
+  else if (ratio >= 1.2) reclaim = 55;
+  else reclaim = 30;
+  components.push({ name: "Reclaim structure", weightPct: 20, score: reclaim, detail: `5m ${m5.toFixed(1)}% / 1h ${h1.toFixed(1)}% · ${ratio.toFixed(1)}x buys` });
+
+  let score = components.reduce((a, c) => a + c.score * (c.weightPct / 100), 0);
+  if (fdv > 0 && liq > 0 && liq / fdv < 0.03) {
+    score -= 12;
+    warnings.push(`Liquidity is ${((liq / fdv) * 100).toFixed(1)}% of FDV — thinner than this tier wants`);
+  }
+  warnings.push("Drawdown is from recent highs, not literal ATH (not in the free API). Confirm the true ATH + fib retracement zone in the Safety tab, and run the holder/authority check — deep liquidity is not the same as a verified rug-free base.");
+
+  return { score: clamp(score), components, reasons, warnings };
+}
+
 export const HOT_MIN = 65;
 
 /**

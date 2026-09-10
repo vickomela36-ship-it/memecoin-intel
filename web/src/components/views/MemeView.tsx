@@ -36,6 +36,7 @@ const LOG_TYPE: Record<MemeSignal["mode"], string> = {
   MOMENTUM: "momentum",
   VOLUME: "volume",
   "HIGHER-CAP": "higher-cap",
+  "ATH-RECLAIM": "ath-reclaim",
   PUMPFUN: "pumpfun",
   LAUNCH: "launch",
   DEGEN: "degen",
@@ -74,6 +75,7 @@ export default function MemeView({
   const momentum = data?.momentum ?? [];
   const volumePlays = data?.volumePlays ?? [];
   const higherCap = data?.higherCap ?? [];
+  const athReclaim = data?.athReclaim ?? [];
   const pumpfun = data?.pumpfun ?? [];
   const launches = data?.launches ?? [];
   const degens = data?.degens ?? [];
@@ -82,25 +84,28 @@ export default function MemeView({
   const all = useMemo(
     () => [
       ...hot, ...trending, ...sure2x, ...recovery3x, ...momentum, ...volumePlays,
-      ...higherCap, ...pumpfun, ...launches, ...degens,
+      ...higherCap, ...athReclaim, ...pumpfun, ...launches, ...degens,
     ],
-    [hot, trending, sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]
+    [hot, trending, sure2x, recovery3x, momentum, volumePlays, higherCap, athReclaim, pumpfun, launches, degens]
   );
 
   // Top pick per upside tier — highest CONVICTION SCORE within each tier, not a
   // prediction the token reaches the target. Higher tiers = higher risk.
+  // `mult` = the tier's target multiple (potential ROI = (mult−1)×100%);
+  // ATH reclaim uses the upside back to the recent high instead.
   const highlights = useMemo(() => {
     const best = (arr: MemeSignal[]) =>
       arr.length ? arr.slice().sort((a, b) => b.score - a.score)[0] : null;
     const byTier = (t: string) => best(all.filter((s) => s.tier === t));
     return [
-      { mult: "2x", anchor: "sec-sure", pick: best(sure2x) ?? byTier("3x POSSIBLE"), note: "Established, deep liquidity, buyers in control" },
-      { mult: "3x", anchor: "sec-recovery", pick: best(recovery3x) ?? byTier("5x POTENTIAL"), note: "Deep-dip reversal, volume returning" },
-      { mult: "5x", anchor: "sec-momentum", pick: byTier("5x POTENTIAL"), note: "Momentum/volume with headroom" },
-      { mult: "10x", anchor: "sec-hot", pick: byTier("10x RUNNER"), note: "Fresh, small-cap, real attention" },
-      { mult: "100x", anchor: "sec-degen", pick: byTier("100x MOONSHOT"), note: "Lottery tier — most go to zero" },
+      { label: "2x", mult: 2, anchor: "sec-sure", pick: best(sure2x) ?? byTier("3x POSSIBLE"), note: "Established, deep liquidity, buyers in control" },
+      { label: "3x", mult: 3, anchor: "sec-recovery", pick: best(recovery3x) ?? byTier("5x POTENTIAL"), note: "Deep-dip reversal, volume returning" },
+      { label: "5x", mult: 5, anchor: "sec-momentum", pick: byTier("5x POTENTIAL"), note: "Momentum/volume with headroom" },
+      { label: "10x", mult: 10, anchor: "sec-hot", pick: byTier("10x RUNNER"), note: "Fresh, small-cap, real attention" },
+      { label: "100x", mult: 100, anchor: "sec-degen", pick: byTier("100x MOONSHOT"), note: "Lottery tier — most go to zero" },
+      { label: "ATH", mult: null as number | null, anchor: "sec-ath", pick: best(athReclaim), note: "Established survivor, deep liquidity, pulled back — retest potential" },
     ];
-  }, [all, sure2x, recovery3x]);
+  }, [all, sure2x, recovery3x, athReclaim]);
 
   const navItems = [
     { id: "sec-hot", label: "HOT", n: hot.length },
@@ -110,10 +115,22 @@ export default function MemeView({
     { id: "sec-momentum", label: "MOMENTUM", n: momentum.length },
     { id: "sec-volume", label: "VOLUME", n: volumePlays.length },
     { id: "sec-highcap", label: "HIGH-CAP", n: higherCap.length },
+    { id: "sec-ath", label: "ATH RECLAIM", n: athReclaim.length },
     { id: "sec-pump", label: "PUMP", n: pumpfun.length },
     { id: "sec-launch", label: "LAUNCH", n: launches.length },
     { id: "sec-degen", label: "DEGEN", n: degens.length },
   ].filter((x) => x.n > 0);
+
+  // Potential ROI shown per highlight — the tier's target (or the reclaim
+  // upside to the recent high for ATH). A target, explicitly not a prediction.
+  const roiLabel = (h: { mult: number | null; pick: MemeSignal | null }): string | null => {
+    if (!h.pick) return null;
+    if (h.mult !== null) return `target +${(h.mult - 1) * 100}%`;
+    const worst = Math.min(h.pick.h6, h.pick.h24);
+    if (worst >= 0) return null;
+    const reclaim = Math.round((-worst / (100 + worst)) * 100);
+    return `reclaim high ≈ +${reclaim}%`;
+  };
 
   const jump = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -268,20 +285,25 @@ export default function MemeView({
               <h2 className="font-display text-lg font-semibold">HIGHLIGHTS</h2>
               <span className="text-xs text-[var(--text-tertiary)]">top pick per upside tier</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               {highlights.map((h) => {
                 const clr =
-                  h.mult === "100x" ? "var(--signal-edge)"
-                    : h.mult === "5x" || h.mult === "10x" ? "var(--signal-neutral)"
-                      : "var(--signal-long)";
+                  h.label === "100x" ? "var(--signal-edge)"
+                    : h.label === "ATH" ? "var(--signal-edge)"
+                      : h.label === "5x" || h.label === "10x" ? "var(--signal-neutral)"
+                        : "var(--signal-long)";
+                const roi = roiLabel(h);
                 return (
-                  <div key={h.mult} className="rounded-input p-2" style={{ background: "var(--bg-elevated)", border: `1px solid ${clr}33` }}>
-                    <div className="font-display font-bold text-lg" style={{ color: clr }}>{h.mult}</div>
+                  <div key={h.label} className="rounded-input p-2" style={{ background: "var(--bg-elevated)", border: `1px solid ${clr}33` }}>
+                    <div className="font-display font-bold text-lg" style={{ color: clr }}>{h.label}</div>
                     {h.pick ? (
                       <>
                         <button onClick={() => jump(h.anchor)} className="font-mono-display text-sm hover:underline block truncate w-full text-left">
                           ${h.pick.symbol}
                         </button>
+                        {roi && (
+                          <div className="font-mono-display text-xs font-bold" style={{ color: clr }}>{roi}</div>
+                        )}
                         <div className="text-xs text-[var(--text-tertiary)] font-mono-display">
                           score {h.pick.score} · {fmtUsd(h.pick.fdv)}
                         </div>
@@ -311,8 +333,9 @@ export default function MemeView({
               })}
             </div>
             <div className="text-[10px] text-[var(--text-tertiary)] mt-2">
-              Ranked by our conviction score within each tier — NOT a prediction that a token reaches
-              the target. Higher tiers carry higher risk. Not financial advice.
+              Ranked by our conviction score within each tier. The ROI figure is the tier&apos;s
+              TARGET (or, for ATH, the upside back to the recent high) — NOT a prediction a token
+              reaches it. Higher tiers carry higher risk. Not financial advice.
             </div>
           </div>
 
@@ -472,6 +495,13 @@ export default function MemeView({
         title={`HIGHER-CAP RECOVERY — $5M+ (${higherCap.length})`}
         caption="Established tokens dipping with buy-side sentiment intact. Core-play material."
         signals={higherCap}
+        fetchedAt={fetchedAt}
+      />
+      <Section
+        anchor="sec-ath"
+        title={`ATH RECLAIM — BLUE-CHIP DIP (${athReclaim.length})`}
+        caption="Established survivors ($1M+, 21d+) with PROVEN deep liquidity that have pulled back into a retracement zone with buyers returning — a dip-buy toward a retest of former highs. Drawdown is from recent highs, not literal ATH: open Safety for the true ATH, the fib retracement zone, and the holder/authority (rug) check before sizing."
+        signals={athReclaim}
         fetchedAt={fetchedAt}
       />
       <Section

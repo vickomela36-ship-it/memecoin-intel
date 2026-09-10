@@ -7,12 +7,14 @@ import type {
 } from "@/types";
 import { bestSolanaPair, discoverTokens, fetchPairsBatch } from "./fetchers";
 import {
+  ATH_RECLAIM_MIN,
   HOT_MIN,
   LAUNCH_MIN,
   MOMENTUM_MIN,
   RECOVERY_MIN,
   SURE2X_MIN,
   VOLUME_MIN,
+  scoreAthReclaim,
   scoreHot,
   scoreLaunch,
   scoreMomentum,
@@ -220,6 +222,7 @@ export async function runMemeScan(
   const momentum: MemeSignal[] = [];
   const volumePlays: MemeSignal[] = [];
   const higherCap: MemeSignal[] = [];
+  const athReclaim: MemeSignal[] = [];
   const pumpfun: MemeSignal[] = [];
   const launches: MemeSignal[] = [];
   const degens: MemeSignal[] = [];
@@ -269,6 +272,7 @@ export async function runMemeScan(
     const fdv = num(pair.fdv);
     const volH1 = num(pair.volume?.h1);
     const inDip = h24 < -8 || h6 < -5;
+    const worstDip = Math.min(h6, h24);
     const bsr = buySellRatio(pair);
     const turnover = fdv > 0 ? vol24 / fdv : 0;
     const hourlyRatio = vol24 > 0 && volH1 > 0 ? (volH1 * 24) / vol24 : 0;
@@ -353,6 +357,26 @@ export async function runMemeScan(
       }
     }
 
+    // ATH reclaim — established survivor, deep liquidity, pulled back into a
+    // retracement zone with buyers returning. A blue-chip dip-buy toward a
+    // retest of former highs. Stricter liquidity/age than the recovery tiers.
+    if (
+      ageHours >= 21 * 24 &&
+      fdv >= 1_000_000 &&
+      liq >= 100_000 &&
+      worstDip <= -12 &&
+      worstDip >= -60 &&
+      bsr >= 1.0 &&
+      m5 >= -3
+    ) {
+      const scored = scoreAthReclaim(pair, ageHours);
+      if (scored.score >= ATH_RECLAIM_MIN) {
+        athReclaim.push(
+          baseSignal(pair, "ATH-RECLAIM", "ATH RECLAIM", ageHours, boosts, scored, "A")
+        );
+      }
+    }
+
     // Momentum riders
     const volAccelerating = volH1 > 0 && (volH1 * 24) > vol24 * 1.5;
     if (h1 > 8 && m5 > -1 && volAccelerating) {
@@ -410,7 +434,7 @@ export async function runMemeScan(
   });
 
   const byScore = (a: MemeSignal, b: MemeSignal) => b.score - a.score;
-  for (const list of [sure2x, recovery3x, momentum, volumePlays, higherCap, pumpfun, launches, degens]) {
+  for (const list of [sure2x, recovery3x, momentum, volumePlays, higherCap, athReclaim, pumpfun, launches, degens]) {
     list.sort(byScore);
   }
 
@@ -507,6 +531,7 @@ export async function runMemeScan(
     momentum: momentum.slice(0, 8),
     volumePlays: volumePlays.slice(0, 8),
     higherCap: higherCap.slice(0, 6),
+    athReclaim: athReclaim.slice(0, 6),
     pumpfun: pumpfun.slice(0, 8),
     launches: launches.slice(0, 8),
     degens: degens.slice(0, 10),
