@@ -78,6 +78,7 @@ export interface MemeSignal {
     | "PUMPFUN"
     | "VOLUME"
     | "TRENDING"
+    | "ATH-RECLAIM"
     | "HOT";
   /** Human category, e.g. "2x GRINDER", "3x RECOVERY", "MOMENTUM RIDER" */
   playType: string;
@@ -138,6 +139,7 @@ export interface MemeScanResult {
   momentum: MemeSignal[];
   volumePlays: MemeSignal[];
   higherCap: MemeSignal[];
+  athReclaim: MemeSignal[];
   pumpfun: MemeSignal[];
   launches: MemeSignal[];
   degens: MemeSignal[];
