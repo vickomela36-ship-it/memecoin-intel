@@ -285,12 +285,22 @@ export default function MemeView({
                         <div className="text-xs text-[var(--text-tertiary)] font-mono-display">
                           score {h.pick.score} · {fmtUsd(h.pick.fdv)}
                         </div>
-                        <button
-                          onClick={() => window.dispatchEvent(new CustomEvent("mi:goto-safety", { detail: h.pick!.address }))}
-                          className="text-xs text-[var(--signal-edge)] hover:underline mt-0.5"
-                        >
-                          safety ↗
-                        </button>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <button
+                            onClick={() => window.dispatchEvent(new CustomEvent("mi:goto-safety", { detail: h.pick!.address }))}
+                            className="text-xs text-[var(--signal-neutral)] hover:underline"
+                          >
+                            safety ↗
+                          </button>
+                          <a
+                            href={h.pick.pairUrl || `https://dexscreener.com/solana/${h.pick.address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-[var(--signal-edge)] hover:underline"
+                          >
+                            chart ↗
+                          </a>
+                        </div>
                       </>
                     ) : (
                       <div className="text-xs text-[var(--text-tertiary)] mt-1">no pick right now</div>
