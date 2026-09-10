@@ -101,16 +101,18 @@ pump.fun tokens are graduating off the bonding curve relative to new launches.
    PUMPPORTAL_API_KEY=<your key>
    ```
 3. This needs the sampling cron, already declared in `vercel.json`:
-   `/api/cron/graduations` every 15 min. It connects to the PumpPortal
-   WebSocket for ~25s, counts new-token vs migration events, and appends a
-   sample to Postgres. The trenches route averages a rolling 24h of samples
-   into the rate.
+   `/api/cron/graduations`, scheduled **daily** (`0 8 * * *`). It connects to
+   the PumpPortal WebSocket for ~25s, counts new-token vs migration events, and
+   appends a sample to Postgres. The trenches route averages a rolling 24h of
+   samples into the rate.
 
-> **Cron frequency & plan:** Vercel's **Hobby** plan runs crons at most **once
-> per day**, which makes the graduation rate a coarse daily estimate. **Pro**
-> allows the 15-min cadence for an accurate rolling rate. The metric is
-> labelled as a sampled estimate either way, and simply doesn't show until the
-> first sample lands.
+> **Cron frequency & plan — IMPORTANT:** Vercel's **Hobby** plan rejects any
+> cron more frequent than **once per day** — a sub-daily schedule (e.g.
+> `*/15 * * * *`) makes the whole **deployment fail**. So the schedule is set to
+> daily, which yields a coarse single-sample estimate. On **Pro**, bump it to
+> `*/15 * * * *` in `vercel.json` for an accurate rolling rate. The metric is
+> labelled a sampled estimate either way and doesn't show until the first
+> sample lands.
 
 > The graduation rate needs both `PUMPPORTAL_API_KEY` **and** Postgres
 > (`DATABASE_URL`) — the cron writes samples there.
