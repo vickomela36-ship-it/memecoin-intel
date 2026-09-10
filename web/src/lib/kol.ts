@@ -4,7 +4,7 @@
 // no reasoning?" over time. Data only ever comes from the configured social
 // worker; nothing is fabricated. Dormant (no-ops) when storage is unset.
 
-import { kv, kvConfigured } from "@/lib/kv";
+import { kv, kvConfigured, kvMGet } from "@/lib/kv";
 
 interface KolCall {
   ca: string;
@@ -109,10 +109,13 @@ export async function kolStats(handle: string): Promise<KolStat | null> {
 
 export async function kolLeaderboard(): Promise<KolStat[]> {
   const members = ((await kv(["SMEMBERS", "mi:kols:index"])) as string[] | null) ?? [];
+  // Batched fetch — one query for all KOL records instead of one GET per handle.
+  const recordMap = await kvMGet(members.slice(0, 80).map((h) => `mi:kol:${h.toLowerCase()}`));
   const stats: KolStat[] = [];
-  for (const h of members.slice(0, 80)) {
-    const s = await kolStats(h);
-    if (s) stats.push(s);
+  for (const raw of Array.from(recordMap.values())) {
+    let rec: KolRecord | null = null;
+    try { rec = JSON.parse(raw) as KolRecord; } catch { continue; }
+    if (rec && rec.calls.length) stats.push(statOf(rec));
   }
   const rank: Record<KolStat["grade"], number> = { SHARP: 0, MIXED: 1, NEW: 2, FADE: 3 };
   stats.sort((a, b) => rank[a.grade] - rank[b.grade] || b.hitRate - a.hitRate);

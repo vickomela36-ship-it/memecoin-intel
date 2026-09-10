@@ -122,3 +122,25 @@ export async function kv(cmd: (string | number)[]): Promise<unknown> {
     return null;
   }
 }
+
+/**
+ * Batched GET — fetch many keys in ONE query instead of N round-trips. Returns
+ * a Map of key → value for the keys that exist and haven't expired. Used by the
+ * ledger/leaderboard routes so they don't loop dozens of sequential GETs.
+ */
+export async function kvMGet(keys: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!sql || !keys.length) return out;
+  try {
+    await ensure();
+    const now = Date.now();
+    const rows = (await sql`
+      SELECT k, v FROM kv_store
+      WHERE k = ANY(${keys}::text[]) AND (expires_at IS NULL OR expires_at > ${now})
+    `) as { k: string; v: string }[];
+    for (const r of rows) out.set(r.k, r.v);
+    return out;
+  } catch {
+    return out;
+  }
+}

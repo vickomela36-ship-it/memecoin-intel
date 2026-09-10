@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { kv, kvConfigured } from "@/lib/kv";
+import { kv, kvConfigured, kvMGet } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -179,9 +179,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ stats: rec ? computeStats(rec) : null });
     }
     const members = ((await kv(["SMEMBERS", "mi:creators:index"])) as string[] | null) ?? [];
+    // Batched fetch — one query for all records instead of one GET per creator.
+    const recordMap = await kvMGet(members.slice(0, 100).map((c) => `mi:creator:${c}`));
     const stats: CreatorStats[] = [];
-    for (const c of members.slice(0, 100)) {
-      const rec = await getRecord(c);
+    for (const raw of Array.from(recordMap.values())) {
+      let rec: CreatorRecord | null = null;
+      try { rec = JSON.parse(raw) as CreatorRecord; } catch { continue; }
       if (rec && rec.tokens.length) stats.push(computeStats(rec));
     }
     // Proven + serial first, then by best multiple
