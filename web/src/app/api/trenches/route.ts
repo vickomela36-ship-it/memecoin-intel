@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { kv, kvConfigured } from "@/lib/kv";
+import { kv, kvConfigured, kvMGet } from "@/lib/kv";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -38,9 +38,9 @@ export async function GET() {
     const freshMcaps: number[] = [];
     const peakMcaps: number[] = [];
 
-    for (const c of members.slice(0, 120)) {
-      const raw = (await kv(["GET", `mi:creator:${c}`])) as string | null;
-      if (!raw) continue;
+    // Batched fetch — one query for all creator records instead of 120 GETs.
+    const recordMap = await kvMGet(members.slice(0, 120).map((c) => `mi:creator:${c}`));
+    for (const raw of Array.from(recordMap.values())) {
       let rec: CreatorRecord | null = null;
       try { rec = JSON.parse(raw) as CreatorRecord; } catch { continue; }
       for (const t of rec.tokens ?? []) {
