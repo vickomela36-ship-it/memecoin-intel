@@ -16,7 +16,13 @@ export async function GET() {
   const telegram = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
   const pumpportal = !!process.env.PUMPPORTAL_API_KEY;
 
+  // Deployed build marker — so you can tell at a glance which commit is live
+  // (compare to the latest on main). Vercel injects these at build/runtime.
+  const commit = (process.env.VERCEL_GIT_COMMIT_SHA ?? "local").slice(0, 7);
+  const branch = process.env.VERCEL_GIT_COMMIT_REF ?? "";
+
   return NextResponse.json({
+    build: { commit, branch },
     features: [
       { key: "kv", label: "Persistence (Postgres)", live: kv,
         powers: "Call ledger, KOL track-record, creator balance/cluster tracking, trenches heat gauge, cross-device sync" },
