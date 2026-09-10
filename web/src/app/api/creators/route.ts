@@ -192,7 +192,10 @@ export async function GET(req: NextRequest) {
       PROVEN: 0, SERIAL: 1, "ONE-HIT": 2, COOKING: 3, "RUG-PRONE": 4, NEW: 5,
     };
     stats.sort((a, b) => rank[a.category] - rank[b.category] || b.bestMultiple - a.bestMultiple);
-    return NextResponse.json({ creators: stats.slice(0, 50) });
+    return NextResponse.json(
+      { creators: stats.slice(0, 50) },
+      { headers: { "Cache-Control": "s-maxage=120, stale-while-revalidate=300" } }
+    );
   } catch {
     return NextResponse.json({ error: "read failed", creators: [] }, { status: 502 });
   }

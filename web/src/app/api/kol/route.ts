@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const kols = await kolLeaderboard();
-    return NextResponse.json({ kols });
+    return NextResponse.json(
+      { kols },
+      { headers: { "Cache-Control": "s-maxage=120, stale-while-revalidate=300" } }
+    );
   } catch {
     return NextResponse.json({ kols: [], error: "read failed" }, { status: 502 });
   }

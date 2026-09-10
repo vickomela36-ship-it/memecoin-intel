@@ -173,7 +173,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "tokens param required" }, { status: 400 });
   }
   try {
-    return NextResponse.json(await getWhaleIntel(tokensParam));
+    return NextResponse.json(await getWhaleIntel(tokensParam), {
+      headers: { "Cache-Control": "s-maxage=120, stale-while-revalidate=300" },
+    });
   } catch {
     return NextResponse.json({ error: "whale intel failed" }, { status: 502 });
   }
