@@ -15,6 +15,7 @@ export async function GET() {
   const birdeye = !!process.env.BIRDEYE_API_KEY;
   const telegram = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
   const pumpportal = !!process.env.PUMPPORTAL_API_KEY;
+  const email = !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM && process.env.DIGEST_TO);
 
   // Deployed build marker — so you can tell at a glance which commit is live
   // (compare to the latest on main). Vercel injects these at build/runtime.
@@ -37,6 +38,8 @@ export async function GET() {
         powers: "Outbound scan/HOT alerts" },
       { key: "pumpportal", label: "Graduation feed (PumpPortal)", live: pumpportal,
         powers: "pump.fun graduation-rate sampling for the trenches heat gauge (needs the /api/cron/graduations cron)" },
+      { key: "email", label: "Email digest (Resend)", live: email,
+        powers: "ATH picks + highlights emailed via /api/email-digest (schedule it hourly during peak hours)" },
     ],
   });
 }

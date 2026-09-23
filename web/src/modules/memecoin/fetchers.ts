@@ -14,6 +14,10 @@ interface BoostEntry {
 const SEARCH_QUERIES = [
   "SOL", "PUMP", "MEME", "BONK", "WIF", "PEPE",
   "DOGE", "CAT", "AI", "TRUMP", "MOON", "SOLANA",
+  // Established Solana blue-chips — keeps the ATH-reclaim / higher-cap pool
+  // stocked with survivors so pullbacks in them actually surface.
+  "POPCAT", "MEW", "GIGA", "PNUT", "FARTCOIN", "MOODENG",
+  "GOAT", "AI16Z", "USELESS", "PENGU", "SPX",
 ];
 
 /**

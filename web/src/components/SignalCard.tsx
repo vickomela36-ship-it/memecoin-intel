@@ -190,6 +190,21 @@ export default function SignalCard({
         )}
       </div>
 
+      {/* Concrete profit target (e.g. reclaim of the recent high) */}
+      {signal.profitTarget && (
+        <div
+          className="mt-2 px-3 py-1.5 rounded-input text-sm font-mono-display flex items-center justify-between flex-wrap gap-1"
+          style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--signal-long)" }}
+        >
+          <span>
+            <span className="text-[var(--text-secondary)]">🎯 PROFIT TARGET</span>{" "}
+            <b style={{ color: "var(--signal-long)" }}>{fmtPrice(signal.profitTarget.price)}</b>{" "}
+            <span style={{ color: "var(--signal-long)" }}>(+{signal.profitTarget.pct}%)</span>
+          </span>
+          <span className="text-xs text-[var(--text-tertiary)]">{signal.profitTarget.basis}</span>
+        </div>
+      )}
+
       {/* Unified sentiment — on-chain flow + velocity + divergence */}
       <Sentiment
         input={{
