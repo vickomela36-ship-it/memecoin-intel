@@ -136,6 +136,42 @@ is attributed once and never overwritten. See the **CALLS** tab.
 
 ---
 
+## 6. Email digest — Resend (ATH picks + highlights)
+
+Powers `/api/email-digest`, which runs the scan and emails the ATH-reclaim
+picks (with profit targets) plus the top pick per upside tier.
+
+1. Create a **Resend** account (resend.com), verify a sending domain, and grab
+   an API key.
+2. Add env vars:
+   ```
+   RESEND_API_KEY=<your key>
+   RESEND_FROM=Memecoin Intel <digest@yourdomain.com>   # must be on a verified domain
+   DIGEST_TO=you@example.com          # comma-separate for multiple recipients
+   DIGEST_SECRET=<any long random string>   # guards the endpoint
+   ```
+3. Redeploy. Test by hitting:
+   `https://<your-domain>/api/email-digest?key=<DIGEST_SECRET>` — it returns
+   `{ ok: true }` and sends the email.
+
+### Scheduling it hourly during peak trading hours
+
+The endpoint does all the work; something just has to hit it on a schedule.
+
+- **Vercel Pro:** add a cron in `vercel.json`, e.g. peak UTC hours hourly:
+  ```json
+  { "path": "/api/email-digest", "schedule": "0 13-23 * * *" }
+  ```
+  ⚠️ **Hobby plan rejects sub-daily crons** (it fails the whole deploy — see §5).
+  On Hobby the most a Vercel cron can do is once daily.
+- **Hobby (recommended for hourly): an external scheduler** — a Claude
+  scheduled routine, cron-job.org, or a GitHub Action — set to hit
+  `https://<your-domain>/api/email-digest?key=<DIGEST_SECRET>` hourly during
+  your peak window. This bypasses the Hobby cron limit entirely.
+
+The digest is a GET with the secret in the query, so any scheduler that can
+fetch a URL works.
+
 ## Verify everything
 
 Open the app → **? (help) → STATUS**. Every row should read **● LIVE** for the

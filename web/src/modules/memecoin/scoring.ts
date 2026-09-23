@@ -401,7 +401,7 @@ export function scoreVolume(
 }
 
 
-export const ATH_RECLAIM_MIN = 62;
+export const ATH_RECLAIM_MIN = 52;
 
 /**
  * "ATH RECLAIM" — established memecoins with proven liquidity depth that have
@@ -428,14 +428,17 @@ export function scoreAthReclaim(
   const warnings: string[] = [];
   const components: ScoreComponent[] = [];
 
-  // Established track record (25) — age + cap. Survivors, not fresh launches.
+  // Established track record (25) — cap-driven first (pair age is unreliable
+  // for established tokens whose active pool is newer than the token), age as a
+  // bonus. A deep-cap, deeply-liquid token is "established" regardless of pool age.
   let estScore: number;
   if (days > 60 || fdv >= 20_000_000) estScore = 100;
   else if (days > 30 || fdv >= 5_000_000) estScore = 85;
-  else if (days > 21) estScore = 70;
-  else estScore = 45;
-  if (days > 30) reasons.push(`Established: ${days.toFixed(0)}d old, ~$${(fdv / 1_000_000).toFixed(1)}M cap`);
-  components.push({ name: "Established (age + cap)", weightPct: 25, score: estScore, detail: `${days.toFixed(0)}d · $${(fdv / 1_000_000).toFixed(1)}M` });
+  else if (days > 14 || fdv >= 2_000_000) estScore = 70;
+  else if (days > 7 || fdv >= 1_000_000) estScore = 55;
+  else estScore = 40;
+  if (fdv >= 5_000_000) reasons.push(`Established: ~$${(fdv / 1_000_000).toFixed(1)}M cap, ${days.toFixed(0)}d active`);
+  components.push({ name: "Established (cap + age)", weightPct: 25, score: estScore, detail: `$${(fdv / 1_000_000).toFixed(1)}M · ${days.toFixed(0)}d` });
 
   // Proven liquidity depth (30) — the load-bearing pillar for this tier.
   let liqScore: number;

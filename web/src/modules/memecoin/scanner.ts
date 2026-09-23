@@ -358,22 +358,32 @@ export async function runMemeScan(
     }
 
     // ATH reclaim — established survivor, deep liquidity, pulled back into a
-    // retracement zone with buyers returning. A blue-chip dip-buy toward a
-    // retest of former highs. Stricter liquidity/age than the recovery tiers.
+    // retracement zone with buyers returning. "Established" is proven by a real
+    // market (cap + deep liquidity + active volume), NOT pair age (unreliable
+    // for tokens whose active pool is newer than the token).
     if (
-      ageHours >= 21 * 24 &&
       fdv >= 1_000_000 &&
-      liq >= 100_000 &&
-      worstDip <= -12 &&
-      worstDip >= -60 &&
-      bsr >= 1.0 &&
-      m5 >= -3
+      liq >= 75_000 &&
+      vol24 >= 100_000 &&
+      worstDip <= -10 &&
+      worstDip >= -70 &&
+      bsr >= 0.9 &&
+      m5 >= -6
     ) {
       const scored = scoreAthReclaim(pair, ageHours);
       if (scored.score >= ATH_RECLAIM_MIN) {
-        athReclaim.push(
-          baseSignal(pair, "ATH-RECLAIM", "ATH RECLAIM", ageHours, boosts, scored, "A")
-        );
+        const sig = baseSignal(pair, "ATH-RECLAIM", "ATH RECLAIM", ageHours, boosts, scored, "A");
+        // Profit target = reclaim of the recent high (the level it pulled back
+        // from). worstDip is negative, so the prior level sits above price.
+        if (sig.priceUsd > 0 && worstDip < 0) {
+          const targetPrice = sig.priceUsd / (1 + worstDip / 100);
+          sig.profitTarget = {
+            price: targetPrice,
+            pct: Math.round((targetPrice / sig.priceUsd - 1) * 100),
+            basis: "reclaim recent high",
+          };
+        }
+        athReclaim.push(sig);
       }
     }
 
