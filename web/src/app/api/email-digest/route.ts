@@ -96,9 +96,61 @@ function buildHtml(scan: MemeScanResult): { html: string; subject: string } {
   return { html, subject };
 }
 
+function buildText(scan: MemeScanResult): string {
+  const all = [
+    ...scan.hot, ...scan.trending, ...scan.sure2x, ...scan.recovery3x, ...scan.momentum,
+    ...scan.volumePlays, ...scan.higherCap, ...scan.athReclaim, ...scan.pumpfun, ...scan.launches, ...scan.degens,
+  ];
+  const best = (arr: MemeSignal[]) => (arr.length ? arr.slice().sort((a, b) => b.score - a.score)[0] : null);
+  const byTier = (t: string) => best(all.filter((s) => s.tier === t));
+  const line = (s: MemeSignal | null, extra: string) =>
+    s ? `  $${s.symbol} — ${money(s.fdv)}, score ${s.score} ${extra} — ${dexUrl(s)}` : "  (no pick)";
+
+  const L: string[] = [];
+  const p = scan.pulse;
+  L.push(`MEMECOIN INTEL — market ${p?.greenPct ?? "?"}% green, median 24h ${p ? (p.medianH24 >= 0 ? "+" : "") + p.medianH24 : "?"}%`);
+  L.push("");
+  L.push(`ATH RECLAIM — BLUE-CHIP DIPS (${scan.athReclaim.length})`);
+  if (scan.athReclaim.length) {
+    for (const s of scan.athReclaim) {
+      const worst = Math.min(s.h6, s.h24);
+      const tgt = s.profitTarget ? `→ target ${price(s.profitTarget.price)} (+${s.profitTarget.pct}%)` : "";
+      L.push(`  $${s.symbol} — ${money(s.fdv)}, ${money(s.liquidity)} liq, ${worst.toFixed(0)}% dip ${tgt} — ${dexUrl(s)}`);
+    }
+  } else {
+    L.push("  No established, deep-liquidity token is in a retracement right now.");
+  }
+  L.push("");
+  L.push("HIGHLIGHTS — top pick per tier");
+  L.push(`2x   ${line(best(scan.sure2x) ?? byTier("3x POSSIBLE"), "(target +100%)")}`);
+  L.push(`3x   ${line(best(scan.recovery3x) ?? byTier("5x POTENTIAL"), "(target +200%)")}`);
+  L.push(`5x   ${line(byTier("5x POTENTIAL"), "(target +400%)")}`);
+  L.push(`10x  ${line(byTier("10x RUNNER"), "(target +900%)")}`);
+  L.push(`100x ${line(byTier("100x MOONSHOT"), "(target +9900%)")}`);
+  L.push("");
+  L.push("Targets are the tier target (or reclaim of the recent high for ATH), not a prediction. Not financial advice — memecoins carry substantial risk of total loss.");
+  return L.join("\n");
+}
+
 export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const format = url.searchParams.get("format");
+
+  // Content-only path (format=json): returns the built digest WITHOUT sending
+  // and without needing Resend — so a routine/scheduler can fetch it and email
+  // it via any channel (e.g. Gmail). Scan data is already public via /api/scan.
+  if (format === "json" || format === "text") {
+    try {
+      const scan = await cachedScan();
+      const { html, subject } = buildHtml(scan);
+      return NextResponse.json({ subject, text: buildText(scan), html, athPicks: scan.athReclaim.length });
+    } catch {
+      return NextResponse.json({ error: "digest failed" }, { status: 502 });
+    }
+  }
+
   const secret = process.env.DIGEST_SECRET;
-  const key = new URL(req.url).searchParams.get("key");
+  const key = url.searchParams.get("key");
   if (secret && key !== secret) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
