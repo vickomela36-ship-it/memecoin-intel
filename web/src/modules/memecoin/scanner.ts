@@ -223,6 +223,7 @@ export async function runMemeScan(
   const volumePlays: MemeSignal[] = [];
   const higherCap: MemeSignal[] = [];
   const athReclaim: MemeSignal[] = [];
+  const athWatch: MemeSignal[] = []; // established candidates not yet in a dip
   const pumpfun: MemeSignal[] = [];
   const launches: MemeSignal[] = [];
   const degens: MemeSignal[] = [];
@@ -357,33 +358,30 @@ export async function runMemeScan(
       }
     }
 
-    // ATH reclaim — established survivor, deep liquidity, pulled back into a
-    // retracement zone with buyers returning. "Established" is proven by a real
-    // market (cap + deep liquidity + active volume), NOT pair age (unreliable
-    // for tokens whose active pool is newer than the token).
-    if (
-      fdv >= 1_000_000 &&
-      liq >= 75_000 &&
-      vol24 >= 100_000 &&
-      worstDip <= -10 &&
-      worstDip >= -70 &&
-      bsr >= 0.9 &&
-      m5 >= -6
-    ) {
+    // ATH reclaim — established survivor, deep liquidity, active market. Those
+    // pulled back into a retracement become dip-buy PICKS (with a profit
+    // target); the rest are kept as WATCH candidates so the section always has
+    // something to show. "Established" is proven by cap + liquidity + volume,
+    // not pair age (unreliable when the active pool is newer than the token).
+    if (fdv >= 1_000_000 && liq >= 75_000 && vol24 >= 100_000 && bsr >= 0.85 && m5 >= -8) {
       const scored = scoreAthReclaim(pair, ageHours);
       if (scored.score >= ATH_RECLAIM_MIN) {
         const sig = baseSignal(pair, "ATH-RECLAIM", "ATH RECLAIM", ageHours, boosts, scored, "A");
-        // Profit target = reclaim of the recent high (the level it pulled back
-        // from). worstDip is negative, so the prior level sits above price.
-        if (sig.priceUsd > 0 && worstDip < 0) {
+        const dipping = worstDip <= -8;
+        if (dipping && sig.priceUsd > 0) {
+          // Profit target = reclaim of the recent high it pulled back from.
           const targetPrice = sig.priceUsd / (1 + worstDip / 100);
           sig.profitTarget = {
             price: targetPrice,
             pct: Math.round((targetPrice / sig.priceUsd - 1) * 100),
             basis: "reclaim recent high",
           };
+          athReclaim.push(sig);
+        } else {
+          sig.playType = "ATH WATCH";
+          sig.reasons.unshift("Not in a deep retracement yet — a watch candidate. Wait for a dip toward the golden pocket (open Safety for the fib zone).");
+          athWatch.push(sig);
         }
-        athReclaim.push(sig);
       }
     }
 
@@ -446,6 +444,14 @@ export async function runMemeScan(
   const byScore = (a: MemeSignal, b: MemeSignal) => b.score - a.score;
   for (const list of [sure2x, recovery3x, momentum, volumePlays, higherCap, athReclaim, pumpfun, launches, degens]) {
     list.sort(byScore);
+  }
+
+  // Ensure the ATH tier is rarely empty: if too few tokens are in an actual
+  // retracement, backfill with the best established deep-liquidity WATCH
+  // candidates (no profit target — they're flagged "watch for a dip").
+  athWatch.sort(byScore);
+  if (athReclaim.length < 4) {
+    athReclaim.push(...athWatch.slice(0, 4 - athReclaim.length));
   }
 
   h24s.sort((a, b) => a - b);

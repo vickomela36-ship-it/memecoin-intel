@@ -500,7 +500,7 @@ export default function MemeView({
       <Section
         anchor="sec-ath"
         title={`ATH RECLAIM — BLUE-CHIP DIP (${athReclaim.length})`}
-        caption="Established survivors ($1M+, 21d+) with PROVEN deep liquidity that have pulled back into a retracement zone with buyers returning — a dip-buy toward a retest of former highs. Rugcheck-gated: DANGER tokens are removed from this tier and survivors are tagged 'no major risks flagged'. Drawdown is from recent highs, not literal ATH — open Safety for the true ATH, the fib retracement zone, and the full holder-distribution/authority check before sizing."
+        caption="Established survivors ($1M+ cap, deep liquidity, active volume) — Rugcheck-gated (DANGER removed). Ones pulled back into a retracement are dip-buy PICKS with a profit target (reclaim of the recent high); when none are dipping, the best established names show as WATCH candidates (no target) so you always have a shortlist. Open Safety for the true ATH, the fib retracement zone, and the full holder/authority check before sizing."
         signals={athReclaim}
         fetchedAt={fetchedAt}
       />
