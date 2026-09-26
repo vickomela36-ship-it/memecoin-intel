@@ -199,7 +199,8 @@ export default function SignalCard({
           <span>
             <span className="text-[var(--text-secondary)]">🎯 PROFIT TARGET</span>{" "}
             <b style={{ color: "var(--signal-long)" }}>{fmtPrice(signal.profitTarget.price)}</b>{" "}
-            <span style={{ color: "var(--signal-long)" }}>(+{signal.profitTarget.pct}%)</span>
+            <span style={{ color: "var(--signal-long)" }}>(+{signal.profitTarget.pct}%)</span>{" "}
+            <span className="text-[var(--text-tertiary)]">→ ~{fmtUsd(signal.profitTarget.mcap)} mcap</span>
           </span>
           <span className="text-xs text-[var(--text-tertiary)]">{signal.profitTarget.basis}</span>
         </div>

@@ -53,7 +53,7 @@ function buildHtml(scan: MemeScanResult): { html: string; subject: string } {
           <td style="padding:8px 10px"><a href="${dexUrl(s)}" style="color:#e6edf3;text-decoration:none;font-weight:700">$${s.symbol}</a></td>
           <td style="padding:8px 10px;color:#8a93a6">${money(s.fdv)} · ${money(s.liquidity)} liq</td>
           <td style="padding:8px 10px;color:#ff4d6d">${worst.toFixed(0)}% dip</td>
-          <td style="padding:8px 10px;color:#14f195;font-weight:700">${target ? `${price(target.price)} (+${target.pct}%)` : "—"}</td>
+          <td style="padding:8px 10px;color:#14f195;font-weight:700">${target ? `${price(target.price)} (+${target.pct}%)<br><span style="color:#8a93a6;font-weight:400">~${money(target.mcap)} mcap</span>` : "—"}</td>
         </tr>`;
       }).join("")
     : `<tr><td colspan="4" style="padding:8px 10px;color:#4a5163">No ATH-reclaim picks this scan — no established, deep-liquidity token is in a retracement right now.</td></tr>`;
@@ -114,7 +114,7 @@ function buildText(scan: MemeScanResult): string {
   if (scan.athReclaim.length) {
     for (const s of scan.athReclaim) {
       const worst = Math.min(s.h6, s.h24);
-      const tgt = s.profitTarget ? `→ target ${price(s.profitTarget.price)} (+${s.profitTarget.pct}%)` : "";
+      const tgt = s.profitTarget ? `→ target ${price(s.profitTarget.price)} (+${s.profitTarget.pct}%, ~${money(s.profitTarget.mcap)} mcap)` : "";
       L.push(`  $${s.symbol} — ${money(s.fdv)}, ${money(s.liquidity)} liq, ${worst.toFixed(0)}% dip ${tgt} — ${dexUrl(s)}`);
     }
   } else {
