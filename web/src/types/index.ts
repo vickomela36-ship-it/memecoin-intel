@@ -111,7 +111,7 @@ export interface MemeSignal {
   tier?: string;
   riskLevel?: string;
   /** Concrete profit target (e.g. reclaim of the recent high for ATH-reclaim) */
-  profitTarget?: { price: number; pct: number; basis: string };
+  profitTarget?: { price: number; pct: number; mcap: number; basis: string };
 }
 
 export interface ScanPulse {

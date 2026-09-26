@@ -369,11 +369,13 @@ export async function runMemeScan(
         const sig = baseSignal(pair, "ATH-RECLAIM", "ATH RECLAIM", ageHours, boosts, scored, "A");
         const dipping = worstDip <= -8;
         if (dipping && sig.priceUsd > 0) {
-          // Profit target = reclaim of the recent high it pulled back from.
-          const targetPrice = sig.priceUsd / (1 + worstDip / 100);
+          // Profit target = reclaim of the recent high it pulled back from —
+          // in both price and the market cap it would return to (take-profit level).
+          const factor = 1 / (1 + worstDip / 100);
           sig.profitTarget = {
-            price: targetPrice,
-            pct: Math.round((targetPrice / sig.priceUsd - 1) * 100),
+            price: sig.priceUsd * factor,
+            pct: Math.round((factor - 1) * 100),
+            mcap: sig.fdv * factor,
             basis: "reclaim recent high",
           };
           athReclaim.push(sig);
